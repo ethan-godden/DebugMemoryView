@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+
+   <extension point="org.eclipse.ui.views">
+      <view
+            id="eclipseview.memoryDiagramView"
+            name="Memory Diagram"
+            category="org.eclipse.debug.ui"
+            class="eclipseview.ui.MemoryDiagramView"
+            icon="icons/memory_view.png"
+            restorable="true">
+      </view>
+   </extension>
+
+   <extension point="org.eclipse.ui.perspectiveExtensions">
+      <perspectiveExtension targetID="org.eclipse.debug.ui.DebugPerspective">
+         <view
+               id="eclipseview.memoryDiagramView"
+               relative="org.eclipse.debug.ui.VariableView"
+               relationship="stack"
+               visible="false">
+         </view>
+      </perspectiveExtension>
+   </extension>
+
+   <extension point="org.eclipse.ui.preferencePages">
+      <page
+            id="eclipseview.preferencePage"
+            name="Memory Diagram"
+            class="eclipseview.ui.MemoryDiagramPreferencePage">
+      </page>
+   </extension>
+
+   <extension point="org.eclipse.core.runtime.preferences">
+      <initializer class="eclipseview.ui.PreferenceInitializer"/>
+   </extension>
+
+</plugin>
