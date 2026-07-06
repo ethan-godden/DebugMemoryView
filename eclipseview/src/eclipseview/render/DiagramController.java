@@ -105,6 +105,7 @@ public class DiagramController {
     }
 
     public DiagramController(FigureCanvas canvas, ResourceManager resources, ViewSettings settings) {
+    	System.out.println("hello");
         this.canvas = canvas;
         this.settings = settings;
         palette = new ColorPalette(resources);
