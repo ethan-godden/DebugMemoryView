@@ -1,0 +1,249 @@
+package eclipseview.model.diff;
+
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import eclipseview.model.FieldModel;
+import eclipseview.model.HeapObjectKind;
+import eclipseview.model.HeapObjectModel;
+import eclipseview.model.HeapReference;
+import eclipseview.model.MemorySnapshot;
+import eclipseview.model.NullValue;
+import eclipseview.model.PrimitiveValue;
+import eclipseview.model.StackFrameModel;
+import eclipseview.model.StaticsClassModel;
+import eclipseview.model.UnreadableValue;
+import eclipseview.model.ValueModel;
+import eclipseview.model.VariableModel;
+
+public final class DiffEngine {
+
+    private DiffEngine() {
+    }
+
+    public static MemoryDiff diff(MemorySnapshot prev, MemorySnapshot curr) {
+        if (prev == null || !prev.threadKey().equals(curr.threadKey())) {
+            return MemoryDiff.initial(curr);
+        }
+        Map<String, ChangeStatus> frameStatus = new HashMap<>();
+        Map<String, ChangeStatus> variableStatus = new HashMap<>();
+        Map<Long, ChangeStatus> objectStatus = new HashMap<>();
+        Map<Long, Map<String, ChangeStatus>> fieldStatus = new HashMap<>();
+        Map<Long, BitSet> changedElements = new HashMap<>();
+        Map<String, ChangeStatus> staticStatus = new HashMap<>();
+        List<StackFrameModel> deletedFrames = new ArrayList<>();
+        Map<String, List<VariableModel>> deletedVariables = new HashMap<>();
+        List<HeapObjectModel> deletedObjects = new ArrayList<>();
+        List<StaticsClassModel> deletedStaticClasses = new ArrayList<>();
+        Map<String, List<FieldModel>> deletedStaticFields = new HashMap<>();
+
+        diffFrames(prev, curr, frameStatus, variableStatus, deletedFrames, deletedVariables);
+        diffHeap(prev, curr, objectStatus, fieldStatus, changedElements, deletedObjects);
+        diffStatics(prev, curr, staticStatus, deletedStaticClasses, deletedStaticFields);
+
+        return new MemoryDiff(prev.sequence(), frameStatus, variableStatus, objectStatus, fieldStatus,
+                changedElements, staticStatus, deletedFrames, deletedVariables, deletedObjects,
+                deletedStaticClasses, deletedStaticFields);
+    }
+
+    private static void diffFrames(MemorySnapshot prev, MemorySnapshot curr,
+            Map<String, ChangeStatus> frameStatus, Map<String, ChangeStatus> variableStatus,
+            List<StackFrameModel> deletedFrames, Map<String, List<VariableModel>> deletedVariables) {
+
+        Map<String, StackFrameModel> prevByKey = new LinkedHashMap<>();
+        for (StackFrameModel f : prev.frames()) {
+            prevByKey.put(f.frameKey(), f);
+        }
+
+        for (StackFrameModel f : curr.frames()) {
+            StackFrameModel old = prevByKey.remove(f.frameKey());
+            if (old == null) {
+                frameStatus.put(f.frameKey(), ChangeStatus.NEW);
+                for (VariableModel v : f.allVariables()) {
+                    variableStatus.put(v.variableKey(f.frameKey()), ChangeStatus.NEW);
+                }
+                continue;
+            }
+            Map<String, VariableModel> oldVars = new LinkedHashMap<>();
+            for (VariableModel v : old.allVariables()) {
+                oldVars.put(v.name(), v);
+            }
+            boolean changed = f.lineNumber() != old.lineNumber();
+            for (VariableModel v : f.allVariables()) {
+                VariableModel oldVar = oldVars.remove(v.name());
+                ChangeStatus status;
+                if (oldVar == null) {
+                    status = ChangeStatus.NEW;
+                } else {
+                    status = valueEquals(v.value(), oldVar.value()) ? ChangeStatus.UNCHANGED : ChangeStatus.CHANGED;
+                }
+                if (status != ChangeStatus.UNCHANGED) {
+                    changed = true;
+                }
+                variableStatus.put(v.variableKey(f.frameKey()), status);
+            }
+            if (!oldVars.isEmpty()) {
+                changed = true;
+                deletedVariables.put(f.frameKey(), List.copyOf(oldVars.values()));
+            }
+            frameStatus.put(f.frameKey(), changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED);
+        }
+
+        for (StackFrameModel gone : prevByKey.values()) {
+            frameStatus.put(gone.frameKey(), ChangeStatus.DELETED);
+            deletedFrames.add(gone);
+        }
+    }
+
+    private static void diffHeap(MemorySnapshot prev, MemorySnapshot curr,
+            Map<Long, ChangeStatus> objectStatus, Map<Long, Map<String, ChangeStatus>> fieldStatus,
+            Map<Long, BitSet> changedElements, List<HeapObjectModel> deletedObjects) {
+
+        for (HeapObjectModel obj : curr.heap().values()) {
+            HeapObjectModel old = prev.heap().get(obj.id());
+            if (old == null) {
+                objectStatus.put(obj.id(), ChangeStatus.NEW);
+                continue;
+            }
+            // Either side unexplored: contents unknown — do not claim a change.
+            if (!obj.explored() || !old.explored()) {
+                objectStatus.put(obj.id(), ChangeStatus.UNCHANGED);
+                continue;
+            }
+            objectStatus.put(obj.id(), diffExploredObject(old, obj, fieldStatus, changedElements));
+        }
+
+        for (HeapObjectModel old : prev.heap().values()) {
+            if (!curr.heap().containsKey(old.id())) {
+                objectStatus.put(old.id(), ChangeStatus.DELETED);
+                deletedObjects.add(old);
+            }
+        }
+    }
+
+    private static ChangeStatus diffExploredObject(HeapObjectModel old, HeapObjectModel obj,
+            Map<Long, Map<String, ChangeStatus>> fieldStatus, Map<Long, BitSet> changedElements) {
+
+        switch (obj.kind()) {
+            case STRING, BOXED, ENUM -> {
+                // Immutable content per identity; same id means unchanged.
+                if (obj.kind() == HeapObjectKind.ENUM) {
+                    break; // enums can have mutable fields — fall through to field diff
+                }
+                return ChangeStatus.UNCHANGED;
+            }
+            case ARRAY -> {
+                boolean changed = obj.arrayLength() != old.arrayLength();
+                BitSet bits = new BitSet();
+                int common = Math.min(obj.elements().size(), old.elements().size());
+                for (int i = 0; i < common; i++) {
+                    if (!valueEquals(obj.elements().get(i), old.elements().get(i))) {
+                        bits.set(i);
+                    }
+                }
+                if (!bits.isEmpty()) {
+                    changedElements.put(obj.id(), bits);
+                    changed = true;
+                }
+                return changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED;
+            }
+            default -> {
+                // PLAIN handled below
+            }
+        }
+
+        Map<String, FieldModel> oldFields = new LinkedHashMap<>();
+        for (FieldModel field : old.fields()) {
+            oldFields.put(field.fieldKey(), field);
+        }
+        Map<String, ChangeStatus> byField = new HashMap<>();
+        boolean changed = false;
+        for (FieldModel field : obj.fields()) {
+            FieldModel oldField = oldFields.remove(field.fieldKey());
+            ChangeStatus status;
+            if (oldField == null) {
+                status = ChangeStatus.NEW; // field appeared (hot code replace)
+            } else {
+                status = valueEquals(field.value(), oldField.value()) ? ChangeStatus.UNCHANGED : ChangeStatus.CHANGED;
+            }
+            if (status != ChangeStatus.UNCHANGED) {
+                changed = true;
+            }
+            byField.put(field.fieldKey(), status);
+        }
+        if (!oldFields.isEmpty()) {
+            changed = true; // fields vanished (hot code replace); rows are gone, box shows CHANGED
+        }
+        if (!byField.isEmpty()) {
+            fieldStatus.put(obj.id(), byField);
+        }
+        return changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED;
+    }
+
+    private static void diffStatics(MemorySnapshot prev, MemorySnapshot curr,
+            Map<String, ChangeStatus> staticStatus, List<StaticsClassModel> deletedStaticClasses,
+            Map<String, List<FieldModel>> deletedStaticFields) {
+
+        Map<String, StaticsClassModel> prevByClass = new LinkedHashMap<>();
+        for (StaticsClassModel c : prev.statics()) {
+            prevByClass.put(c.className(), c);
+        }
+
+        for (StaticsClassModel c : curr.statics()) {
+            StaticsClassModel old = prevByClass.remove(c.className());
+            Map<String, FieldModel> oldFields = new LinkedHashMap<>();
+            if (old != null) {
+                for (FieldModel f : old.fields()) {
+                    oldFields.put(f.fieldKey(), f);
+                }
+            }
+            for (FieldModel f : c.fields()) {
+                FieldModel oldField = oldFields.remove(f.fieldKey());
+                ChangeStatus status;
+                if (old == null || oldField == null) {
+                    status = ChangeStatus.NEW;
+                } else {
+                    status = valueEquals(f.value(), oldField.value()) ? ChangeStatus.UNCHANGED : ChangeStatus.CHANGED;
+                }
+                staticStatus.put(f.fieldKey(), status);
+            }
+            if (!oldFields.isEmpty()) {
+                deletedStaticFields.put(c.className(), List.copyOf(oldFields.values()));
+                for (String key : oldFields.keySet()) {
+                    staticStatus.put(key, ChangeStatus.DELETED);
+                }
+            }
+        }
+
+        deletedStaticClasses.addAll(prevByClass.values());
+    }
+
+    /**
+     * References compare by target identity — retargeting is the change; the target's
+     * own mutation is reported on the target box, not on every inbound arrow.
+     * Two unreadable values compare equal so read failures don't flag as changes.
+     */
+    static boolean valueEquals(ValueModel a, ValueModel b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        if (a.getClass() != b.getClass()) {
+            return false;
+        }
+        if (a instanceof PrimitiveValue pa) {
+            PrimitiveValue pb = (PrimitiveValue) b;
+            return pa.typeName().equals(pb.typeName()) && pa.text().equals(pb.text());
+        }
+        if (a instanceof NullValue) {
+            return true;
+        }
+        if (a instanceof HeapReference ra) {
+            return ra.targetId() == ((HeapReference) b).targetId();
+        }
+        return a instanceof UnreadableValue;
+    }
+}
