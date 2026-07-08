@@ -6,6 +6,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import eclipseview.model.FieldModel;
 import eclipseview.model.HeapObjectKind;
@@ -156,32 +158,42 @@ public final class DiffEngine {
             }
         }
 
-        Map<String, FieldModel> oldFields = new LinkedHashMap<>();
-        for (FieldModel field : old.fields()) {
-            oldFields.put(field.fieldKey(), field);
-        }
         Map<String, ChangeStatus> byField = new HashMap<>();
-        boolean changed = false;
-        for (FieldModel field : obj.fields()) {
-            FieldModel oldField = oldFields.remove(field.fieldKey());
-            ChangeStatus status;
-            if (oldField == null) {
-                status = ChangeStatus.NEW; // field appeared (hot code replace)
-            } else {
-                status = valueEquals(field.value(), oldField.value()) ? ChangeStatus.UNCHANGED : ChangeStatus.CHANGED;
-            }
-            if (status != ChangeStatus.UNCHANGED) {
-                changed = true;
-            }
-            byField.put(field.fieldKey(), status);
-        }
-        if (!oldFields.isEmpty()) {
-            changed = true; // fields vanished (hot code replace); rows are gone, box shows CHANGED
-        }
+        // Vanished fields (hot code replace) only flag the box CHANGED; no ghost rows inside a heap box.
+        boolean changed = diffFields(old.fields(), obj.fields(), byField::put, deleted -> { });
         if (!byField.isEmpty()) {
             fieldStatus.put(obj.id(), byField);
         }
         return changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED;
+    }
+
+    /**
+     * Diffs current against old fields keyed by {@link FieldModel#fieldKey()}: reports each current
+     * field's status (NEW/UNCHANGED/CHANGED) to {@code onField} and the leftover deleted old fields
+     * (in their original order) to {@code onDeleted}. Returns whether anything changed.
+     */
+    private static boolean diffFields(List<FieldModel> oldFieldList, List<FieldModel> currentFields,
+            BiConsumer<String, ChangeStatus> onField, Consumer<List<FieldModel>> onDeleted) {
+
+        Map<String, FieldModel> oldFields = new LinkedHashMap<>();
+        for (FieldModel field : oldFieldList) {
+            oldFields.put(field.fieldKey(), field);
+        }
+        boolean changed = false;
+        for (FieldModel field : currentFields) {
+            FieldModel oldField = oldFields.remove(field.fieldKey());
+            ChangeStatus status = oldField == null ? ChangeStatus.NEW
+                    : valueEquals(field.value(), oldField.value()) ? ChangeStatus.UNCHANGED : ChangeStatus.CHANGED;
+            if (status != ChangeStatus.UNCHANGED) {
+                changed = true;
+            }
+            onField.accept(field.fieldKey(), status);
+        }
+        if (!oldFields.isEmpty()) {
+            changed = true;
+            onDeleted.accept(List.copyOf(oldFields.values()));
+        }
+        return changed;
     }
 
     private static void diffStatics(MemorySnapshot prev, MemorySnapshot curr,
@@ -195,28 +207,13 @@ public final class DiffEngine {
 
         for (StaticsClassModel c : curr.statics()) {
             StaticsClassModel old = prevByClass.remove(c.className());
-            Map<String, FieldModel> oldFields = new LinkedHashMap<>();
-            if (old != null) {
-                for (FieldModel f : old.fields()) {
-                    oldFields.put(f.fieldKey(), f);
+            List<FieldModel> oldFields = old == null ? List.of() : old.fields();
+            diffFields(oldFields, c.fields(), staticStatus::put, deleted -> {
+                deletedStaticFields.put(c.className(), deleted);
+                for (FieldModel f : deleted) {
+                    staticStatus.put(f.fieldKey(), ChangeStatus.DELETED);
                 }
-            }
-            for (FieldModel f : c.fields()) {
-                FieldModel oldField = oldFields.remove(f.fieldKey());
-                ChangeStatus status;
-                if (old == null || oldField == null) {
-                    status = ChangeStatus.NEW;
-                } else {
-                    status = valueEquals(f.value(), oldField.value()) ? ChangeStatus.UNCHANGED : ChangeStatus.CHANGED;
-                }
-                staticStatus.put(f.fieldKey(), status);
-            }
-            if (!oldFields.isEmpty()) {
-                deletedStaticFields.put(c.className(), List.copyOf(oldFields.values()));
-                for (String key : oldFields.keySet()) {
-                    staticStatus.put(key, ChangeStatus.DELETED);
-                }
-            }
+            });
         }
 
         deletedStaticClasses.addAll(prevByClass.values());
@@ -231,19 +228,12 @@ public final class DiffEngine {
         if (a == null || b == null) {
             return a == b;
         }
-        if (a.getClass() != b.getClass()) {
-            return false;
-        }
-        if (a instanceof PrimitiveValue pa) {
-            PrimitiveValue pb = (PrimitiveValue) b;
-            return pa.typeName().equals(pb.typeName()) && pa.text().equals(pb.text());
-        }
-        if (a instanceof NullValue) {
-            return true;
-        }
-        if (a instanceof HeapReference ra) {
-            return ra.targetId() == ((HeapReference) b).targetId();
-        }
-        return a instanceof UnreadableValue;
+        return switch (a) {
+            case PrimitiveValue pa -> b instanceof PrimitiveValue pb
+                    && pa.typeName().equals(pb.typeName()) && pa.text().equals(pb.text());
+            case NullValue na -> b instanceof NullValue;
+            case HeapReference ra -> b instanceof HeapReference rb && ra.targetId() == rb.targetId();
+            case UnreadableValue ua -> b instanceof UnreadableValue;
+        };
     }
 }

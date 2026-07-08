@@ -1,6 +1,7 @@
 package eclipseview.render;
 
 import java.util.function.DoubleConsumer;
+import java.util.function.IntSupplier;
 
 import org.eclipse.draw2d.Cursors;
 import org.eclipse.draw2d.Figure;
@@ -22,10 +23,12 @@ import org.eclipse.swt.graphics.Color;
 public class SashFigure extends Figure {
 
     private final DoubleConsumer onRatioChanged;
+    private final IntSupplier gutterWidth;
     private Color lineColor;
 
-    public SashFigure(DoubleConsumer onRatioChanged) {
+    public SashFigure(DoubleConsumer onRatioChanged, IntSupplier gutterWidth) {
         this.onRatioChanged = onRatioChanged;
+        this.gutterWidth = gutterWidth;
         setCursor(Cursors.SIZEWE);
         addMouseListener(new MouseListener.Stub() {
             @Override
@@ -56,11 +59,12 @@ public class SashFigure extends Figure {
         // Event coordinates are sash-relative == absolute here (no coordinate systems),
         // as is the parent's client area.
         Rectangle area = parent.getClientArea();
-        int usable = area.width - ColumnsLayout.GUTTER;
+        int gutter = gutterWidth.getAsInt();
+        int usable = area.width - gutter;
         if (usable <= 0) {
             return;
         }
-        double ratio = (mouseX - area.x - ColumnsLayout.GUTTER / 2.0) / usable;
+        double ratio = (mouseX - area.x - gutter / 2.0) / usable;
         onRatioChanged.accept(Math.clamp(ratio, ColumnsLayout.MIN_RATIO, ColumnsLayout.MAX_RATIO));
     }
 

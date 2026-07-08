@@ -14,7 +14,6 @@ import eclipseview.model.StackFrameModel;
 import eclipseview.model.StaticsClassModel;
 import eclipseview.model.UnreadableValue;
 import eclipseview.model.ValueModel;
-import eclipseview.model.VariableKind;
 import eclipseview.model.VariableModel;
 import eclipseview.model.diff.ChangeStatus;
 import eclipseview.model.diff.DiffEngine;
@@ -47,7 +46,7 @@ public final class DiffEngineTest {
     }
 
     private static VariableModel local(String name, ValueModel v) {
-        return new VariableModel(name, "int", v, VariableKind.LOCAL);
+        return new VariableModel(name, "int", v);
     }
 
     private static StackFrameModel frame(int depthFromBottom, String method, int line, VariableModel thisVar,
@@ -138,8 +137,8 @@ public final class DiffEngineTest {
     }
 
     private static void testVariableStatusesAndGhosts() {
-        VariableModel thisPrev = new VariableModel("this", "Demo", new HeapReference(7L, "Demo"), VariableKind.THIS);
-        VariableModel thisCurr = new VariableModel("this", "Demo", new HeapReference(7L, "Demo"), VariableKind.THIS);
+        VariableModel thisPrev = new VariableModel("this", "Demo", new HeapReference(7L, "Demo"));
+        VariableModel thisCurr = new VariableModel("this", "Demo", new HeapReference(7L, "Demo"));
         StackFrameModel prevF = frame(0, "run", 10, thisPrev,
                 local("same", prim("1")), local("mut", prim("2")), local("gone", prim("3")));
         StackFrameModel currF = frame(0, "run", 10, thisCurr,

@@ -16,13 +16,14 @@ import eclipseview.render.FontKit;
 public class MoreRowFigure extends Clickable {
 
     public MoreRowFigure(String text, ColorPalette palette, FontKit fonts, Runnable onExpand) {
-        super(buildLabel(text, palette, fonts));
+        super(mutedRow(text, palette, fonts));
         setRolloverEnabled(true);
         setCursor(Cursors.HAND);
         addActionListener(event -> onExpand.run());
     }
 
-    private static Label buildLabel(String text, ColorPalette palette, FontKit fonts) {
+    /** The shared muted secondary-row label; the "+N more…" and elided-info rows use the same recipe. */
+    public static Label mutedRow(String text, ColorPalette palette, FontKit fonts) {
         Label label = new Label(text);
         label.setLabelAlignment(PositionConstants.LEFT);
         label.setFont(fonts.name());

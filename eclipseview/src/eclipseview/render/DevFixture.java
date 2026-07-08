@@ -16,7 +16,6 @@ import eclipseview.model.PrimitiveValue;
 import eclipseview.model.StackFrameModel;
 import eclipseview.model.StaticsClassModel;
 import eclipseview.model.UnreadableValue;
-import eclipseview.model.VariableKind;
 import eclipseview.model.VariableModel;
 import eclipseview.model.diff.ChangeStatus;
 import eclipseview.model.diff.MemoryDiff;
@@ -186,10 +185,10 @@ public final class DevFixture {
     }
 
     private static VariableModel local(String name, String type, eclipseview.model.ValueModel value) {
-        return new VariableModel(name, type, value, VariableKind.LOCAL);
+        return new VariableModel(name, type, value);
     }
 
     private static VariableModel thisVar(String type, long targetId) {
-        return new VariableModel("this", type, ref(targetId, type), VariableKind.THIS);
+        return new VariableModel("this", type, ref(targetId, type));
     }
 }

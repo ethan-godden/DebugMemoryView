@@ -12,7 +12,6 @@ import eclipseview.model.HeapReference;
 import eclipseview.model.MemorySnapshot;
 import eclipseview.model.StackFrameModel;
 import eclipseview.model.StaticsClassModel;
-import eclipseview.model.VariableKind;
 import eclipseview.model.VariableModel;
 import eclipseview.render.HeapLayouter;
 import eclipseview.render.LayoutMemory;
@@ -63,7 +62,7 @@ public final class HeapLayouterTest {
     private static StackFrameModel frameWithRoots(long... rootIds) {
         List<VariableModel> locals = new ArrayList<>();
         for (int i = 0; i < rootIds.length; i++) {
-            locals.add(new VariableModel("v" + i, "T", ref(rootIds[i]), VariableKind.LOCAL));
+            locals.add(new VariableModel("v" + i, "T", ref(rootIds[i])));
         }
         return new StackFrameModel(StackFrameModel.frameKey(0, "Demo", "main", "()V"),
                 "Demo", "main", "()V", "Demo.main() line 1", 1, 0,

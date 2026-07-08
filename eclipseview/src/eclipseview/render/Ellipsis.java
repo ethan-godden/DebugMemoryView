@@ -36,25 +36,6 @@ public final class Ellipsis {
         return s.substring(0, chars) + ELLIPSIS;
     }
 
-    /** "java.util.ArrayList" -> "ArrayList", "demo.Outer$Inner[]" -> "Inner[]". */
-    public static String simpleTypeName(String qualified) {
-        if (qualified == null || qualified.isEmpty()) {
-            return "?";
-        }
-        int bracket = qualified.indexOf('[');
-        String base = bracket >= 0 ? qualified.substring(0, bracket) : qualified;
-        String suffix = bracket >= 0 ? qualified.substring(bracket) : "";
-        int dot = base.lastIndexOf('.');
-        if (dot >= 0) {
-            base = base.substring(dot + 1);
-        }
-        int dollar = base.lastIndexOf('$');
-        if (dollar >= 0 && dollar + 1 < base.length()) {
-            base = base.substring(dollar + 1);
-        }
-        return base + suffix;
-    }
-
     /** Display text of a value, char-capped. References render as "#id" (the arrow carries the rest). */
     public static String valueText(ValueModel value, int maxChars) {
         return clipChars(fullValueText(value), maxChars);
@@ -62,18 +43,11 @@ public final class Ellipsis {
 
     /** Untruncated display text of a value (tooltips). */
     public static String fullValueText(ValueModel value) {
-        if (value instanceof PrimitiveValue primitive) {
-            return primitive.text();
-        }
-        if (value instanceof NullValue) {
-            return "null";
-        }
-        if (value instanceof HeapReference ref) {
-            return "#" + ref.targetId();
-        }
-        if (value instanceof UnreadableValue) {
-            return "<unreadable>";
-        }
-        return String.valueOf(value);
+        return switch (value) {
+            case PrimitiveValue primitive -> primitive.text();
+            case NullValue nullValue -> "null";
+            case HeapReference ref -> "#" + ref.targetId();
+            case UnreadableValue unreadable -> "<unreadable>";
+        };
     }
 }

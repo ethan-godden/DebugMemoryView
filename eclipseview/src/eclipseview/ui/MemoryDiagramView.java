@@ -119,7 +119,7 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         pageBook.showPage(placeholder);
 
         pipeline = new SnapshotPipeline();
-        pipeline.setLimits(limitsFor(settings.maxHeapObjectsRendered));
+        pipeline.setLimits(ExtractionLimits.defaults().withMaxObjects(settings.maxHeapObjectsRendered));
         // Consumer first: install() seeds from the current debug context and may
         // publish immediately (view opened mid-suspend).
         pipeline.addConsumer(this);
@@ -342,7 +342,7 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
 
     private void applyHeapObjectCap(int value) {
         settings.maxHeapObjectsRendered = value;
-        pipeline.setLimits(limitsFor(value)); // takes effect on the next extraction
+        pipeline.setLimits(ExtractionLimits.defaults().withMaxObjects(value)); // takes effect on the next extraction
         controller.clearHeapCapOverride(); // an explicit choice beats "+N not rendered…"
         controller.refresh(); // render cap applies to the cached snapshot immediately
     }
@@ -357,12 +357,5 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         settings.maxArrayElementsRendered = value;
         controller.clearArrayElementCapOverrides();
         controller.refresh();
-    }
-
-    private static ExtractionLimits limitsFor(int maxObjects) {
-        ExtractionLimits d = ExtractionLimits.defaults();
-        return new ExtractionLimits(d.maxFrames(), maxObjects, d.maxDepth(), d.maxFieldsPerObject(),
-                d.maxArrayElements(), d.maxStaticFieldsPerClass(), d.maxStringLength(),
-                d.inlineStrings(), d.inlineBoxed(), d.includeSyntheticFields(), d.maxErrors());
     }
 }

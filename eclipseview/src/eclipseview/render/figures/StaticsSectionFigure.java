@@ -4,9 +4,6 @@ import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.LineBorder;
 import org.eclipse.draw2d.MarginBorder;
-import org.eclipse.draw2d.MouseEvent;
-import org.eclipse.draw2d.MouseListener;
-import org.eclipse.draw2d.PositionConstants;
 import org.eclipse.draw2d.ToolbarLayout;
 
 import eclipseview.render.ColorPalette;
@@ -29,13 +26,7 @@ public class StaticsSectionFigure extends Figure {
         setBackgroundColor(palette.boxBackground());
         setBorder(new LineBorder(palette.boxBorder(), 1));
 
-        Label header = new Label((collapsed ? "▸ " : "▾ ") + "Static fields");
-        header.setLabelAlignment(PositionConstants.LEFT);
-        header.setFont(fonts.header());
-        header.setOpaque(true);
-        header.setBackgroundColor(palette.headerBackground());
-        header.setForegroundColor(palette.textForeground());
-        header.setBorder(new MarginBorder(3, 6, 3, 6));
+        Label header = BoxFigures.collapsibleHeader("Static fields", !collapsed, false, palette, fonts);
         add(header);
 
         body = new Figure();
@@ -48,17 +39,7 @@ public class StaticsSectionFigure extends Figure {
             add(body);
         }
 
-        if (onToggle != null) {
-            header.addMouseListener(new MouseListener.Stub() {
-                @Override
-                public void mousePressed(MouseEvent me) {
-                    if (me.button == 1) {
-                        me.consume();
-                        onToggle.run();
-                    }
-                }
-            });
-        }
+        BoxFigures.attachToggle(header, onToggle);
     }
 
     public void addClassFigure(StaticClassFigure classFigure) {

@@ -6,6 +6,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.IntFunction;
 
 import org.eclipse.draw2d.ConnectionLayer;
 import org.eclipse.draw2d.Figure;
@@ -16,7 +18,6 @@ import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.Layer;
 import org.eclipse.draw2d.LayeredPane;
 import org.eclipse.draw2d.MarginBorder;
-import org.eclipse.draw2d.PositionConstants;
 import org.eclipse.draw2d.ScrollPane;
 import org.eclipse.draw2d.TextUtilities;
 import org.eclipse.draw2d.ToolbarLayout;
@@ -76,6 +77,7 @@ public class DiagramController {
 
     private final LayeredPane rootPane;
     private final Layer columnsLayer;
+    private final ColumnsLayout columnsLayout;
     private final ConnectionLayer connectionLayer;
     private final RunningOverlay overlay;
     private final ColumnFigure stackColumn;
@@ -141,10 +143,11 @@ public class DiagramController {
         heapPane.setContents(heapContents);
         heapColumn = new ColumnFigure("Heap", heapPane, palette, fonts);
 
-        sash = new SashFigure(this::onSashRatioChanged);
+        sash = new SashFigure(this::onSashRatioChanged, this::currentGutterWidth);
 
         columnsLayer = new Layer();
-        columnsLayer.setLayoutManager(new ColumnsLayout(settings, stackColumn, sash, heapColumn));
+        columnsLayout = new ColumnsLayout(settings, stackColumn, sash, heapColumn, stackContents, heapContents);
+        columnsLayer.setLayoutManager(columnsLayout);
         columnsLayer.add(stackColumn);
         columnsLayer.add(sash);
         columnsLayer.add(heapColumn);
@@ -411,17 +414,12 @@ public class DiagramController {
             figure.addRow(infoRow("(locals unavailable)"));
         }
         List<VariableModel> variables = frame.allVariables(); // this first, then locals
-        String capKey = "frame:" + frameKey;
-        int shown = Math.min(variables.size(), expansion.capOf(capKey, settings.maxLocalsPerFrameRendered));
-        for (int i = 0; i < shown; i++) {
+        renderCapped("frame:" + frameKey, variables.size(), settings.maxLocalsPerFrameRendered, i -> {
             VariableModel variable = variables.get(i);
             ChangeStatus status = ghost ? ChangeStatus.DELETED
                     : palette.effective(diff.variableStatusOf(variable.variableKey(frameKey)));
-            figure.addRow(newRow(variable.name(), variable.declaredTypeName(), variable.value(), status, refs, true));
-        }
-        if (shown < variables.size()) {
-            figure.addRow(moreRow(variables.size() - shown, capKey));
-        }
+            return newRow(variable.name(), variable.declaredTypeName(), variable.value(), status, refs, true);
+        }, figure::addRow);
         if (!ghost && palette.isHighlighting()) {
             List<VariableModel> ghostVariables = diff.deletedVariables().get(frameKey);
             if (ghostVariables != null) {
@@ -524,21 +522,15 @@ public class DiagramController {
                 // in the diff (no per-element statuses); rows stay UNCHANGED-styled.
                 // The full quoted content lives in the header tooltip (buildObjectFigure).
                 String content = model.displayText() != null ? model.displayText() : "";
-                String capKey = "str:" + id;
-                int shown = Math.min(content.length(),
-                        expansion.capOf(capKey, settings.maxArrayElementsRendered));
-                for (int i = 0; i < shown; i++) {
+                // Chars are capped like an array; only unrendered EXTRACTED chars count toward "+N more".
+                renderCapped("str:" + id, content.length(), settings.maxArrayElementsRendered, i -> {
                     char c = content.charAt(i);
                     VariableRowFigure row = new VariableRowFigure(Integer.toString(i),
                             String.valueOf(c), null, plainStatus, palette, fonts);
                     hover.hookRow(row);
                     row.setToolTip(tooltipLabel("char : '" + c + "'"));
-                    figure.addRow(row);
-                }
-                if (shown < content.length()) {
-                    // Only the unrendered EXTRACTED chars; extraction truncation is unknowable.
-                    figure.addRow(moreRow(content.length() - shown, capKey));
-                }
+                    return row;
+                }, figure::addRow);
                 if (model.textTruncated()) {
                     figure.addRow(infoRow("(truncated)"));
                 }
@@ -552,22 +544,16 @@ public class DiagramController {
             }
             case STUB -> figure.addRow(infoRow("(not explored)"));
             case ARRAY -> {
-                String capKey = "arr:" + id;
                 String componentType = componentTypeOf(model.typeName());
-                int shown = Math.min(model.elements().size(),
-                        expansion.capOf(capKey, settings.maxArrayElementsRendered));
-                for (int i = 0; i < shown; i++) {
+                // The index is the identifier ("0 : <box>"); length lives in the header.
+                // The component type plays the declared type in the row tooltips.
+                renderCapped("arr:" + id, model.elements().size(), settings.maxArrayElementsRendered, i -> {
                     ChangeStatus status = ghost ? ChangeStatus.DELETED
                             : palette.effective(diff.elementChanged(id, i) ? ChangeStatus.CHANGED
                                     : ChangeStatus.UNCHANGED);
-                    // The index is the identifier ("0 : <box>"); length lives in the header.
-                    // The component type plays the declared type in the row tooltips.
-                    figure.addRow(newRow(Integer.toString(i), componentType, model.elements().get(i),
-                            status, refs, false));
-                }
-                if (shown < model.elements().size()) {
-                    figure.addRow(moreRow(model.elements().size() - shown, capKey));
-                }
+                    return newRow(Integer.toString(i), componentType, model.elements().get(i),
+                            status, refs, false);
+                }, figure::addRow);
                 if (model.elementsOmitted() > 0) {
                     figure.addRow(infoRow("(+" + model.elementsOmitted() + " not captured)"));
                 }
@@ -579,18 +565,12 @@ public class DiagramController {
                     hover.hookRow(constantRow);
                     figure.addRow(constantRow);
                 }
-                String capKey = "obj:" + id;
-                int shown = Math.min(model.fields().size(),
-                        expansion.capOf(capKey, settings.maxFieldsPerObjectRendered));
-                for (int i = 0; i < shown; i++) {
+                renderCapped("obj:" + id, model.fields().size(), settings.maxFieldsPerObjectRendered, i -> {
                     FieldModel field = model.fields().get(i);
                     ChangeStatus status = ghost ? ChangeStatus.DELETED
                             : palette.effective(diff.fieldStatusOf(id, field.fieldKey()));
-                    figure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false));
-                }
-                if (shown < model.fields().size()) {
-                    figure.addRow(moreRow(model.fields().size() - shown, capKey));
-                }
+                    return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
+                }, figure::addRow);
                 if (model.fieldsOmitted() > 0) {
                     figure.addRow(infoRow("(+" + model.fieldsOmitted() + " not captured)"));
                 }
@@ -645,17 +625,12 @@ public class DiagramController {
         }
         for (StaticsClassModel staticsClass : snapshot.statics()) {
             StaticClassFigure classFigure = new StaticClassFigure(staticsClass.className(), false, palette, fonts);
-            String capKey = "statics:" + staticsClass.className();
-            int shown = Math.min(staticsClass.fields().size(),
-                    expansion.capOf(capKey, settings.maxFieldsPerObjectRendered));
-            for (int i = 0; i < shown; i++) {
-                FieldModel field = staticsClass.fields().get(i);
-                ChangeStatus status = palette.effective(diff.staticStatusOf(field.fieldKey()));
-                classFigure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false));
-            }
-            if (shown < staticsClass.fields().size()) {
-                classFigure.addRow(moreRow(staticsClass.fields().size() - shown, capKey));
-            }
+            renderCapped("statics:" + staticsClass.className(), staticsClass.fields().size(),
+                    settings.maxFieldsPerObjectRendered, i -> {
+                        FieldModel field = staticsClass.fields().get(i);
+                        ChangeStatus status = palette.effective(diff.staticStatusOf(field.fieldKey()));
+                        return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
+                    }, classFigure::addRow);
             if (staticsClass.fieldsOmitted() > 0) {
                 classFigure.addRow(infoRow("(+" + staticsClass.fieldsOmitted() + " not captured)"));
             }
@@ -723,6 +698,23 @@ public class DiagramController {
         return declaredTypeName == null ? fullValue : declaredTypeName + " : " + fullValue;
     }
 
+    /**
+     * Renders up to {@code cap(capKey)} of {@code total} rows — {@code rowFor.apply(i)} builds each
+     * and {@code addRow} appends it — then a "+N more…" expander when the list is capped. Returns
+     * the number of rows shown so the caller can append its own trailing info rows.
+     */
+    private int renderCapped(String capKey, int total, int defaultMax,
+            IntFunction<IFigure> rowFor, Consumer<IFigure> addRow) {
+        int shown = Math.min(total, expansion.capOf(capKey, defaultMax));
+        for (int i = 0; i < shown; i++) {
+            addRow.accept(rowFor.apply(i));
+        }
+        if (shown < total) {
+            addRow.accept(moreRow(total - shown, capKey));
+        }
+        return shown;
+    }
+
     private MoreRowFigure moreRow(int hidden, String capKey) {
         return new MoreRowFigure("+ " + hidden + " more…", palette, fonts, () -> {
             expansion.raiseCap(capKey);
@@ -731,12 +723,7 @@ public class DiagramController {
     }
 
     private Label infoRow(String text) {
-        Label label = new Label(text);
-        label.setLabelAlignment(PositionConstants.LEFT);
-        label.setFont(fonts.name());
-        label.setForegroundColor(palette.mutedForeground());
-        label.setBorder(new MarginBorder(2, 15, 2, 4));
-        return label;
+        return MoreRowFigure.mutedRow(text, palette, fonts);
     }
 
     private Label tooltipLabel(String text) {
@@ -759,14 +746,14 @@ public class DiagramController {
             // Round-robin lanes for cross-pane edges, assigned in build order (top of
             // stack first), so parallel curves spread across the gutter.
             int lane = ref.fromStack() ? laneCounter++ % MemoryConnectionRouter.LANES : 0;
-            StateConnection connection = new StateConnection(ref.row(), ref.targetId(), ref.status(), lane, palette);
-            connection.setSourceAnchor(new ValueBoxAnchor(ref.row().valueBox()));
+            StateConnection connection = new StateConnection(ref.status(), lane, palette);
+            connection.setSourceAnchor(new RowEdgeAnchor(ref.row().valueBox(), Rectangle::getCenter));
             // Cross-pane arrows land on the row's LEFT edge (facing the gutter);
             // same-viewport ones (heap/statics sources) land on its RIGHT edge,
             // matching the router's right-side arcs.
             connection.setTargetAnchor(ref.fromStack()
-                    ? new RowLeftAnchor(target.getReferenceTargetFigure())
-                    : new RowRightAnchor(target.getReferenceTargetFigure()));
+                    ? new RowEdgeAnchor(target.getReferenceTargetFigure(), Rectangle::getLeft)
+                    : new RowEdgeAnchor(target.getReferenceTargetFigure(), Rectangle::getRight));
             connectionsBySourceRow.put(ref.row(), connection);
             connectionLayer.add(connection);
         }
@@ -832,10 +819,17 @@ public class DiagramController {
         columnsLayer.revalidate(); // pane contents move -> anchors fire -> arrows follow live
     }
 
+    private int currentGutterWidth() {
+        return columnsLayout.currentGutter();
+    }
+
     private Rectangle gutterAbsolute() {
         Rectangle stackBounds = stackColumn.getBounds().getCopy();
+        Rectangle heapBounds = heapColumn.getBounds().getCopy();
         stackColumn.translateToAbsolute(stackBounds);
-        return new Rectangle(stackBounds.right(), stackBounds.y, ColumnsLayout.GUTTER, stackBounds.height);
+        heapColumn.translateToAbsolute(heapBounds); // sibling of stackColumn: same coordinate space
+        return new Rectangle(stackBounds.right(), stackBounds.y,
+                Math.max(0, heapBounds.x - stackBounds.right()), stackBounds.height);
     }
 
     /**

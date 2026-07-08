@@ -8,9 +8,6 @@ import org.eclipse.draw2d.IFigure;
 import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.LineBorder;
 import org.eclipse.draw2d.MarginBorder;
-import org.eclipse.draw2d.MouseEvent;
-import org.eclipse.draw2d.MouseListener;
-import org.eclipse.draw2d.PositionConstants;
 import org.eclipse.draw2d.ToolbarLayout;
 import org.eclipse.draw2d.geometry.Dimension;
 import org.eclipse.swt.SWT;
@@ -55,13 +52,7 @@ public class HeapObjectFigure extends Figure {
         baseBorder = borderFor(status, palette);
         setBorder(baseBorder);
 
-        header = new Label((collapsed ? "▸ " : "▾ ") + title);
-        header.setLabelAlignment(PositionConstants.LEFT);
-        header.setFont(ghost ? fonts.deleted() : fonts.header());
-        header.setOpaque(true);
-        header.setBackgroundColor(palette.headerBackground());
-        header.setForegroundColor(ghost ? palette.deletedForeground() : palette.textForeground());
-        header.setBorder(new MarginBorder(3, 6, 3, 6));
+        header = BoxFigures.collapsibleHeader(title, !collapsed, ghost, palette, fonts);
         add(header);
 
         body = new Figure();
@@ -72,17 +63,7 @@ public class HeapObjectFigure extends Figure {
             add(body);
         }
 
-        if (onToggle != null) {
-            header.addMouseListener(new MouseListener.Stub() {
-                @Override
-                public void mousePressed(MouseEvent me) {
-                    if (me.button == 1) {
-                        me.consume();
-                        onToggle.run();
-                    }
-                }
-            });
-        }
+        BoxFigures.attachToggle(header, onToggle);
     }
 
     public long id() {
@@ -124,16 +105,11 @@ public class HeapObjectFigure extends Figure {
         repaint();
     }
 
-    public boolean isHoverHighlighted() {
-        return hoverHighlight;
-    }
-
     // Every border reserves 2px of insets (the 1px lines pad with a margin), so
     // the hover swap to a 2px accent border never changes the box's geometry.
     private static Border borderFor(ChangeStatus status, ColorPalette palette) {
         return switch (status) {
-            case NEW -> new LineBorder(palette.statusForeground(ChangeStatus.NEW), 2);
-            case CHANGED -> new LineBorder(palette.statusForeground(ChangeStatus.CHANGED), 2);
+            case NEW, CHANGED -> new LineBorder(palette.statusForeground(status), 2);
             case DELETED -> new CompoundBorder(
                     new LineBorder(palette.deletedForeground(), 1, SWT.LINE_DASH), new MarginBorder(1));
             case UNCHANGED -> new CompoundBorder(new LineBorder(palette.boxBorder(), 1), new MarginBorder(1));

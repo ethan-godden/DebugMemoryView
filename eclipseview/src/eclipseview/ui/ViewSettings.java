@@ -34,14 +34,8 @@ public final class ViewSettings {
         maxArrayElementsRendered = valueOr(memento.getInteger("maxArrayElements"), maxArrayElementsRendered);
         maxLocalsPerFrameRendered = valueOr(memento.getInteger("maxLocals"), maxLocalsPerFrameRendered);
         maxValueChars = valueOr(memento.getInteger("maxValueChars"), maxValueChars);
-        Boolean statics = memento.getBoolean("showStatics");
-        if (statics != null) {
-            showStatics = statics;
-        }
-        Boolean highlight = memento.getBoolean("highlightChanges");
-        if (highlight != null) {
-            highlightChanges = highlight;
-        }
+        showStatics = boolValueOr(memento.getBoolean("showStatics"), showStatics);
+        highlightChanges = boolValueOr(memento.getBoolean("highlightChanges"), highlightChanges);
         Integer ratio = memento.getInteger("sashRatioMillis");
         if (ratio != null) {
             sashRatio = Math.clamp(ratio / 1000.0, 0.2, 0.8);
@@ -49,6 +43,10 @@ public final class ViewSettings {
     }
 
     private static int valueOr(Integer value, int fallback) {
+        return value != null ? value : fallback;
+    }
+
+    private static boolean boolValueOr(Boolean value, boolean fallback) {
         return value != null ? value : fallback;
     }
 }

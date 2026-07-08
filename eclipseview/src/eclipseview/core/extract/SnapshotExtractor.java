@@ -37,7 +37,6 @@ import eclipseview.model.StackFrameModel;
 import eclipseview.model.StaticsClassModel;
 import eclipseview.model.UnreadableValue;
 import eclipseview.model.ValueModel;
-import eclipseview.model.VariableKind;
 import eclipseview.model.VariableModel;
 
 /**
@@ -175,14 +174,13 @@ public final class SnapshotExtractor {
         try {
             IJavaObject self = frame.getThis(); // null for static/native frames
             if (self != null) {
-                thisVariable = new VariableModel("this", typeName, convert(self, 0), VariableKind.THIS); //$NON-NLS-1$
+                thisVariable = new VariableModel("this", typeName, convert(self, 0)); //$NON-NLS-1$
             }
         } catch (DebugException e) {
             String message = shortMessage(e);
             recordError("this of " + label + ": " + message); //$NON-NLS-1$ //$NON-NLS-2$
             if (!staticMethod && !nativeFrame) {
-                thisVariable = new VariableModel("this", typeName, new UnreadableValue(message), //$NON-NLS-1$
-                        VariableKind.THIS);
+                thisVariable = new VariableModel("this", typeName, new UnreadableValue(message)); //$NON-NLS-1$
             }
         }
 
@@ -194,8 +192,7 @@ public final class SnapshotExtractor {
             if (name == null) {
                 continue;
             }
-            locals.add(new VariableModel(name, declaredTypeName(variable), valueOf(variable, 0),
-                    VariableKind.LOCAL));
+            locals.add(new VariableModel(name, declaredTypeName(variable), valueOf(variable, 0)));
         }
         return new StackFrameModel(frameKey, typeName, methodName, signature, label, lineNumber,
                 depthFromBottom, false, nativeFrame, staticMethod, localsAvailable, thisVariable,
@@ -348,8 +345,7 @@ public final class SnapshotExtractor {
 
     private HeapObjectModel buildBoxed(IJavaObject object, long id, String wrapperTypeName)
             throws DebugException {
-        IJavaFieldVariable valueField = object.getField("value", false); //$NON-NLS-1$
-        IJavaValue inner = valueField == null ? null : (IJavaValue) valueField.getValue();
+        IJavaValue inner = boxedInner(object);
         String text = inner == null ? "?" : inner.getValueString(); //$NON-NLS-1$
         return HeapObjectModel.boxed(id, wrapperTypeName, simpleName(wrapperTypeName), text,
                 isJvmCached(wrapperTypeName, inner));
@@ -570,9 +566,14 @@ public final class SnapshotExtractor {
     }
 
     private static String boxedText(IJavaObject object) throws DebugException {
-        IJavaFieldVariable valueField = object.getField("value", false); //$NON-NLS-1$
-        IJavaValue inner = valueField == null ? null : (IJavaValue) valueField.getValue();
+        IJavaValue inner = boxedInner(object);
         return inner == null ? "?" : inner.getValueString(); //$NON-NLS-1$
+    }
+
+    /** The unwrapped {@code value} field of a boxed primitive (null if the field is absent). */
+    private static IJavaValue boxedInner(IJavaObject object) throws DebugException {
+        IJavaFieldVariable valueField = object.getField("value", false); //$NON-NLS-1$
+        return valueField == null ? null : (IJavaValue) valueField.getValue();
     }
 
     static String typeNameFromSignature(String signature) {

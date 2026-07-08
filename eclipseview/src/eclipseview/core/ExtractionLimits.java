@@ -17,4 +17,11 @@ public record ExtractionLimits(
     public static ExtractionLimits defaults() {
         return new ExtractionLimits(32, 200, 8, 32, 100, 24, 200, false, false, false, 20);
     }
+
+    /** Copy with a different explored-heap-object cap (the only per-view override). */
+    public ExtractionLimits withMaxObjects(int newMaxObjects) {
+        return new ExtractionLimits(maxFrames, newMaxObjects, maxDepth, maxFieldsPerObject,
+                maxArrayElements, maxStaticFieldsPerClass, maxStringLength,
+                inlineStrings, inlineBoxed, includeSyntheticFields, maxErrors);
+    }
 }

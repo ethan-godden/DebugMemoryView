@@ -12,7 +12,6 @@ import org.eclipse.swt.graphics.Path;
 import org.eclipse.swt.widgets.Display;
 
 import eclipseview.model.diff.ChangeStatus;
-import eclipseview.render.figures.VariableRowFigure;
 
 /**
  * A reference arrow, colored by the SOURCE row's change status, painted as a
@@ -28,8 +27,6 @@ public class StateConnection extends PolylineConnection {
     private static final int FADED_ALPHA = 90;
     private static final int DOT_DIAMETER = 6;
 
-    private final VariableRowFigure sourceRow;
-    private final long targetId;
     private final ChangeStatus sourceStatus;
     private final int laneIndex;
     private final Color baseColor;
@@ -39,10 +36,7 @@ public class StateConnection extends PolylineConnection {
     private Point curveC1;
     private Point curveC2;
 
-    public StateConnection(VariableRowFigure sourceRow, long targetId, ChangeStatus sourceStatus,
-            int laneIndex, ColorPalette palette) {
-        this.sourceRow = sourceRow;
-        this.targetId = targetId;
+    public StateConnection(ChangeStatus sourceStatus, int laneIndex, ColorPalette palette) {
         this.sourceStatus = sourceStatus;
         this.laneIndex = laneIndex;
         baseColor = palette.connectionColor(sourceStatus);
@@ -54,18 +48,6 @@ public class StateConnection extends PolylineConnection {
         PolygonDecoration arrowhead = new PolygonDecoration(); // filled TRIANGLE_TIP, inherits color
         arrowhead.setScale(9, 4);
         setTargetDecoration(arrowhead);
-    }
-
-    public VariableRowFigure sourceRow() {
-        return sourceRow;
-    }
-
-    public long targetId() {
-        return targetId;
-    }
-
-    public ChangeStatus sourceStatus() {
-        return sourceStatus;
     }
 
     /** Jitter slot (0..LANES-1) spreading parallel cross-pane curves apart. */

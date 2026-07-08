@@ -23,11 +23,7 @@ public final class ExpansionMemory {
     }
 
     public void setFrameCollapsed(String frameKey, boolean collapsed) {
-        if (collapsed) {
-            collapsedFrames.add(frameKey);
-        } else {
-            collapsedFrames.remove(frameKey);
-        }
+        toggle(collapsedFrames, frameKey, collapsed);
     }
 
     public boolean isObjectCollapsed(long id) {
@@ -35,11 +31,7 @@ public final class ExpansionMemory {
     }
 
     public void setObjectCollapsed(long id, boolean collapsed) {
-        if (collapsed) {
-            collapsedObjects.add(Long.valueOf(id));
-        } else {
-            collapsedObjects.remove(Long.valueOf(id));
-        }
+        toggle(collapsedObjects, Long.valueOf(id), collapsed);
     }
 
     public boolean isStaticsCollapsed() {
@@ -76,5 +68,14 @@ public final class ExpansionMemory {
     public void clear() {
         expandAll();
         capOverrides.clear();
+    }
+
+    /** Add {@code key} to {@code set} when {@code present}, else remove it. */
+    private static <T> void toggle(Set<T> set, T key, boolean present) {
+        if (present) {
+            set.add(key);
+        } else {
+            set.remove(key);
+        }
     }
 }

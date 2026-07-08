@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -39,7 +40,7 @@ import eclipseview.model.diff.MemoryDiff;
  * debug event dispatch thread; they make NO JDI wire calls — they capture
  * debug-model references, bump the request sequence and (re)schedule the Job.</li>
  * <li>Every JDI call happens inside {@link SnapshotJob#run} on a Jobs-framework
- * worker thread. The baseline maps are confined to that thread (the Jobs
+ * worker thread. The baseline map is confined to that thread (the Jobs
  * framework never runs one Job instance concurrently with itself).</li>
  * <li>Results are marshalled to consumers with {@code Display.asyncExec}, gated
  * by a final sequence check so a superseded snapshot is never displayed.</li>
@@ -50,6 +51,10 @@ public final class SnapshotPipeline {
     private static final long DEBOUNCE_MS = 150;
 
     private record Request(long seq, IJavaThread thread, IJavaStackFrame frame) {
+    }
+
+    /** One thread's cached suspend state, keyed by threadKey; the three parts always move together. */
+    private record Baseline(MemorySnapshot snapshot, MemoryDiff diff, long generation) {
     }
 
     private final AtomicLong seq = new AtomicLong();
@@ -77,9 +82,7 @@ public final class SnapshotPipeline {
     private volatile String lastPublishedThreadKey;
 
     // Job-thread-confined state (accessed only inside SnapshotJob.run).
-    private final Map<String, MemorySnapshot> baselines = new HashMap<>();
-    private final Map<String, MemoryDiff> baselineDiffs = new HashMap<>();
-    private final Map<String, Long> baselineGenerations = new HashMap<>();
+    private final Map<String, Baseline> baselines = new HashMap<>();
 
     // ---- triggers (UI thread / debug event dispatch thread; no JDI wire calls) ----
 
@@ -99,21 +102,31 @@ public final class SnapshotPipeline {
         trigger(thread, null);
     }
 
-    public void threadResumed(IJavaThread thread) {
+    // Under the request lock: if the live request matches, mark it superseded (a seq
+    // bump so any in-flight publish is dropped), cancel the Job, and forget it.
+    private void invalidateCurrentMatching(Predicate<Request> doomed) {
         synchronized (requestLock) {
             Request req = current;
-            if (req != null && req.thread() == thread) {
-                seq.incrementAndGet(); // the pending/in-flight request is doomed
+            if (req != null && doomed.test(req)) {
+                seq.incrementAndGet();
                 job.cancel();
                 current = null;
             }
         }
+    }
+
+    private void bumpAndNotifyResumed(String threadKey) {
+        suspendGenerations.merge(threadKey, Long.valueOf(1), Long::sum);
+        uiPost(c -> c.threadResumed(threadKey));
+    }
+
+    public void threadResumed(IJavaThread thread) {
+        invalidateCurrentMatching(req -> req.thread() == thread);
         String threadKey = threadKeys.get(thread);
         if (threadKey == null) {
             return; // never extracted, so never rendered
         }
-        suspendGenerations.merge(threadKey, Long.valueOf(1), Long::sum);
-        uiPost(c -> c.threadResumed(threadKey));
+        bumpAndNotifyResumed(threadKey);
     }
 
     /**
@@ -123,14 +136,7 @@ public final class SnapshotPipeline {
      * baseline generation and republish a stale snapshot via the fast path.
      */
     public void targetResumed(IDebugTarget target) {
-        synchronized (requestLock) {
-            Request req = current;
-            if (req != null && req.thread().getDebugTarget() == target) {
-                seq.incrementAndGet(); // the pending/in-flight request is doomed
-                job.cancel();
-                current = null;
-            }
-        }
+        invalidateCurrentMatching(req -> req.thread().getDebugTarget() == target);
         String targetKey = targetKeys.get(target);
         if (targetKey == null) {
             return; // never extracted from this target
@@ -138,22 +144,14 @@ public final class SnapshotPipeline {
         String prefix = targetKey + "/"; //$NON-NLS-1$
         for (String threadKey : threadKeys.values()) {
             if (threadKey.startsWith(prefix)) {
-                suspendGenerations.merge(threadKey, Long.valueOf(1), Long::sum);
-                uiPost(c -> c.threadResumed(threadKey));
+                bumpAndNotifyResumed(threadKey);
             }
         }
     }
 
     /** A dying thread's key caches and Job-confined baselines must not outlive it. */
     public void threadTerminated(IJavaThread thread) {
-        synchronized (requestLock) {
-            Request req = current;
-            if (req != null && req.thread() == thread) {
-                seq.incrementAndGet();
-                job.cancel();
-                current = null;
-            }
-        }
+        invalidateCurrentMatching(req -> req.thread() == thread);
         String threadKey = threadKeys.remove(thread);
         if (threadKey == null) {
             return; // never extracted, so nothing retained
@@ -164,14 +162,7 @@ public final class SnapshotPipeline {
     }
 
     public void targetTerminated(IDebugTarget target) {
-        synchronized (requestLock) {
-            Request req = current;
-            if (req != null && req.thread().getDebugTarget() == target) {
-                seq.incrementAndGet();
-                job.cancel();
-                current = null;
-            }
-        }
+        invalidateCurrentMatching(req -> req.thread().getDebugTarget() == target);
         String targetKey = targetKeys.remove(target);
         if (targetKey == null) {
             return; // never extracted from this target
@@ -265,14 +256,11 @@ public final class SnapshotPipeline {
                 // Same-suspend fast path: a pure frame reselection republishes the
                 // cached snapshot + diff instead of re-extracting (which would also
                 // wrongly wipe the change highlighting by re-baselining).
-                MemorySnapshot baseline = baselines.get(threadKey);
-                MemoryDiff cachedDiff = baselineDiffs.get(threadKey);
-                Long baselineGeneration = baselineGenerations.get(threadKey);
-                if (baseline != null && cachedDiff != null && baselineGeneration != null
-                        && baselineGeneration.longValue() == generation) {
-                    MemorySnapshot snap = baseline.withSelectedFrame(frameKeyOf(thread, selected));
-                    baselines.put(threadKey, snap);
-                    publish(req.seq(), snap, cachedDiff);
+                Baseline baseline = baselines.get(threadKey);
+                if (baseline != null && baseline.generation() == generation) {
+                    MemorySnapshot snap = baseline.snapshot().withSelectedFrame(frameKeyOf(thread, selected));
+                    baselines.put(threadKey, new Baseline(snap, baseline.diff(), generation));
+                    publish(req.seq(), snap, baseline.diff());
                     return Status.OK_STATUS;
                 }
 
@@ -281,10 +269,9 @@ public final class SnapshotPipeline {
                 if (req.seq() != seq.get() || monitor.isCanceled()) {
                     return Status.CANCEL_STATUS; // superseded during the run; never store or show
                 }
-                MemoryDiff diff = DiffEngine.diff(baselines.get(threadKey), snapshot);
-                baselines.put(threadKey, snapshot);
-                baselineDiffs.put(threadKey, diff);
-                baselineGenerations.put(threadKey, Long.valueOf(generation));
+                MemorySnapshot previous = baseline != null ? baseline.snapshot() : null;
+                MemoryDiff diff = DiffEngine.diff(previous, snapshot);
+                baselines.put(threadKey, new Baseline(snapshot, diff, generation));
                 publish(req.seq(), snapshot, diff);
                 return Status.OK_STATUS;
             } catch (OperationCanceledException e) {
@@ -312,12 +299,8 @@ public final class SnapshotPipeline {
             // died with it (baselines are keyed "targetKey/thread…"); each removal
             // is a no-op for the other kind of key.
             baselines.remove(key);
-            baselineDiffs.remove(key);
-            baselineGenerations.remove(key);
             String prefix = key + "/"; //$NON-NLS-1$
             baselines.keySet().removeIf(k -> k.startsWith(prefix));
-            baselineDiffs.keySet().removeIf(k -> k.startsWith(prefix));
-            baselineGenerations.keySet().removeIf(k -> k.startsWith(prefix));
         }
     }
 
