@@ -109,6 +109,9 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         controller = new DiagramController(canvas, resources, settings);
         canvas.setContents(controller.getRootFigure());
         canvas.addMouseWheelListener(controller::handleWheel);
+        // Trackpad two-finger horizontal swipes come through as a distinct SWT
+        // event (not the MouseWheelListener); route them to the whole-view h-scroll.
+        canvas.addListener(SWT.MouseHorizontalWheel, event -> controller.handleHorizontalWheel(event.count));
 
         makeActions(store);
         contributeToActionBars();

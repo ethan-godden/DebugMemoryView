@@ -12,7 +12,6 @@ public final class ViewSettings {
     public int maxValueChars = 60;
     public boolean showStatics = true;
     public boolean highlightChanges = true;
-    public double sashRatio = 0.42;
 
     public void save(IMemento memento) {
         memento.putInteger("maxHeapObjects", maxHeapObjectsRendered);
@@ -22,7 +21,6 @@ public final class ViewSettings {
         memento.putInteger("maxValueChars", maxValueChars);
         memento.putBoolean("showStatics", showStatics);
         memento.putBoolean("highlightChanges", highlightChanges);
-        memento.putInteger("sashRatioMillis", (int) Math.round(sashRatio * 1000));
     }
 
     public void restore(IMemento memento) {
@@ -36,10 +34,6 @@ public final class ViewSettings {
         maxValueChars = valueOr(memento.getInteger("maxValueChars"), maxValueChars);
         showStatics = boolValueOr(memento.getBoolean("showStatics"), showStatics);
         highlightChanges = boolValueOr(memento.getBoolean("highlightChanges"), highlightChanges);
-        Integer ratio = memento.getInteger("sashRatioMillis");
-        if (ratio != null) {
-            sashRatio = Math.clamp(ratio / 1000.0, 0.2, 0.8);
-        }
     }
 
     private static int valueOr(Integer value, int fallback) {

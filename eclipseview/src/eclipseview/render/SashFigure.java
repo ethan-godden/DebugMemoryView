@@ -1,71 +1,24 @@
 package eclipseview.render;
 
-import java.util.function.DoubleConsumer;
-import java.util.function.IntSupplier;
-
-import org.eclipse.draw2d.Cursors;
 import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.Graphics;
-import org.eclipse.draw2d.IFigure;
-import org.eclipse.draw2d.MouseEvent;
-import org.eclipse.draw2d.MouseListener;
-import org.eclipse.draw2d.MouseMotionListener;
 import org.eclipse.draw2d.geometry.Rectangle;
 import org.eclipse.swt.graphics.Color;
 
 /**
- * Draggable Draw2d divider between the stack and heap columns (an SWT sash is
- * impossible with the shared connection layer). Draw2d delivers drag events to
- * the figure that received mousePressed, so the drag keeps working when the
- * pointer outruns the 6 px sash; pane contents move during the drag, anchors
- * fire, and the arrows follow live.
+ * Fixed divider line centered in the gutter between the stack and heap columns.
+ * The columns are content-driven (the stack takes its natural width, the heap
+ * takes the rest), so there is no ratio to drag: this is a plain visual marker
+ * of the stack/heap boundary and of the lane the cross-pane arrows swing
+ * through. {@link ColumnsLayout} positions it.
  */
 public class SashFigure extends Figure {
 
-    private final DoubleConsumer onRatioChanged;
-    private final IntSupplier gutterWidth;
     private Color lineColor;
-
-    public SashFigure(DoubleConsumer onRatioChanged, IntSupplier gutterWidth) {
-        this.onRatioChanged = onRatioChanged;
-        this.gutterWidth = gutterWidth;
-        setCursor(Cursors.SIZEWE);
-        addMouseListener(new MouseListener.Stub() {
-            @Override
-            public void mousePressed(MouseEvent me) {
-                if (me.button == 1) {
-                    me.consume();
-                }
-            }
-        });
-        addMouseMotionListener(new MouseMotionListener.Stub() {
-            @Override
-            public void mouseDragged(MouseEvent me) {
-                dragTo(me.x);
-            }
-        });
-    }
 
     public void setLineColor(Color lineColor) {
         this.lineColor = lineColor;
         repaint();
-    }
-
-    private void dragTo(int mouseX) {
-        IFigure parent = getParent();
-        if (parent == null) {
-            return;
-        }
-        // Event coordinates are sash-relative == absolute here (no coordinate systems),
-        // as is the parent's client area.
-        Rectangle area = parent.getClientArea();
-        int gutter = gutterWidth.getAsInt();
-        int usable = area.width - gutter;
-        if (usable <= 0) {
-            return;
-        }
-        double ratio = (mouseX - area.x - gutter / 2.0) / usable;
-        onRatioChanged.accept(Math.clamp(ratio, ColumnsLayout.MIN_RATIO, ColumnsLayout.MAX_RATIO));
     }
 
     @Override

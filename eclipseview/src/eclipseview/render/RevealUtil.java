@@ -49,4 +49,21 @@ public final class RevealUtil {
         viewport.setViewLocation(viewLocation.x + (targetBounds.x - visible.x - REVEAL_MARGIN),
                 viewLocation.y + (targetBounds.y - visible.y - REVEAL_MARGIN));
     }
+
+    /**
+     * Scrolls a viewport horizontally only, so the target's x-range is in view; RangeModel
+     * clamps the value. Used to bring the heap column into the window when the whole view is
+     * scrolled off the heap (the vertical axis lives inside the per-column pane, not here).
+     */
+    public static void revealHorizontally(Viewport viewport, IFigure target) {
+        Rectangle targetBounds = target.getBounds().getCopy();
+        target.translateToAbsolute(targetBounds);
+        Rectangle visible = absoluteClientArea(viewport);
+        if (targetBounds.x >= visible.x && targetBounds.right() <= visible.right()) {
+            return;
+        }
+        Point viewLocation = viewport.getViewLocation();
+        viewport.setViewLocation(viewLocation.x + (targetBounds.x - visible.x - REVEAL_MARGIN),
+                viewLocation.y);
+    }
 }

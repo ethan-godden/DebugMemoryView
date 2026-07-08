@@ -113,7 +113,12 @@ public class DiagramController {
         palette.refresh(canvas, settings.highlightChanges);
         fonts = new FontKit(resources);
 
-        // The canvas itself never scrolls; the root contents always fills it exactly.
+        // The root contents fill the viewport while it is wide enough; once the
+        // diagram's natural width (see ColumnsLayout) exceeds the viewport the
+        // contents overflow and the whole view scrolls horizontally as one unit.
+        // Height always fills — per-column vertical scrolling lives inside each
+        // ScrollPane. Bars are NEVER (ScrollThumbOverlay paints the affordance);
+        // the RangeModels stay live regardless, so wheel/reveal scroll works.
         canvas.setScrollBarVisibility(FigureCanvas.NEVER);
         canvas.getViewport().setContentsTracksWidth(true);
         canvas.getViewport().setContentsTracksHeight(true);
@@ -143,10 +148,10 @@ public class DiagramController {
         heapPane.setContents(heapContents);
         heapColumn = new ColumnFigure("Heap", heapPane, palette, fonts);
 
-        sash = new SashFigure(this::onSashRatioChanged, this::currentGutterWidth);
+        sash = new SashFigure();
 
         columnsLayer = new Layer();
-        columnsLayout = new ColumnsLayout(settings, stackColumn, sash, heapColumn, stackContents, heapContents);
+        columnsLayout = new ColumnsLayout(stackColumn, sash, heapColumn, stackContents, heapContents);
         columnsLayer.setLayoutManager(columnsLayout);
         columnsLayer.add(stackColumn);
         columnsLayer.add(sash);
@@ -180,10 +185,12 @@ public class DiagramController {
         rootPane.add(overlay, "overlay");
 
         scrollThumbs = new ScrollThumbOverlay(canvas, thumbLayer, palette::textForeground);
-        scrollThumbs.track(stackPane, true);
-        scrollThumbs.track(stackPane, false);
-        scrollThumbs.track(heapPane, true);
-        scrollThumbs.track(heapPane, false);
+        // Vertical thumbs are per-column (each pane scrolls its own contents);
+        // the single horizontal thumb rides the outer canvas viewport, which is
+        // what scrolls the whole diagram sideways.
+        scrollThumbs.track(stackPane.getViewport(), true);
+        scrollThumbs.track(heapPane.getViewport(), true);
+        scrollThumbs.track(canvas.getViewport(), false);
 
         hover = new HoverController(this);
         applyChrome();
@@ -288,26 +295,41 @@ public class DiagramController {
     }
 
     /**
-     * Routed from the canvas SWT wheel listener: the canvas viewport never scrolls
-     * and Draw2d dispatches wheel events to the focus figure, so we hit-test the
-     * pointer and scroll the enclosing pane ourselves (Shift = horizontal on heap).
+     * Routed from the canvas SWT wheel listener. Draw2d dispatches wheel events to
+     * the focus figure, so we drive scrolling ourselves. Shift = horizontal, which
+     * is a whole-view gesture: the entire diagram scrolls sideways under the
+     * viewport (the columns keep their natural width; see ColumnsLayout). A plain
+     * wheel scrolls the column under the pointer vertically.
      */
     public void handleWheel(org.eclipse.swt.events.MouseEvent event) {
+        int delta = -event.count * WHEEL_STEP;
+        if ((event.stateMask & SWT.SHIFT) != 0) {
+            scrollCanvasHorizontally(delta);
+            return;
+        }
         ScrollPane pane = paneAt(event.x, event.y);
         if (pane == null) {
             return;
         }
-        int delta = -event.count * WHEEL_STEP;
-        boolean horizontal = (event.stateMask & SWT.SHIFT) != 0;
-        if (horizontal) {
-            pane.scrollHorizontalTo(pane.getViewport().getHorizontalRangeModel().getValue() + delta);
-        } else {
-            // DefaultRangeModel clamps; no bounds math needed.
-            pane.scrollVerticalTo(pane.getViewport().getVerticalRangeModel().getValue() + delta);
-        }
-        // A clamped wheel changes no RangeModel value (so no listener fires) but should
-        // still flash the thumb — the user is actively scrolling.
-        scrollThumbs.show(pane, !horizontal);
+        pane.scrollVerticalTo(pane.getViewport().getVerticalRangeModel().getValue() + delta);
+        scrollThumbs.show(pane.getViewport(), true);
+    }
+
+    /**
+     * Native horizontal wheel (a trackpad two-finger swipe on macOS) arrives as a
+     * separate SWT event that the MouseWheelListener never sees, so the view wires
+     * it here: same whole-view sideways scroll as Shift+wheel.
+     */
+    public void handleHorizontalWheel(int count) {
+        scrollCanvasHorizontally(-count * WHEEL_STEP);
+    }
+
+    private void scrollCanvasHorizontally(int delta) {
+        // FigureCanvas.scrollToX clamps to the horizontal RangeModel.
+        canvas.scrollToX(canvas.getViewport().getHorizontalRangeModel().getValue() + delta);
+        // A clamped wheel changes no RangeModel value (so no listener fires) but
+        // should still flash the thumb — the user is actively scrolling.
+        scrollThumbs.show(canvas.getViewport(), false);
     }
 
     // ---------------------------------------------------------------- rebuild
@@ -316,6 +338,7 @@ public class DiagramController {
         hover.reset();
         Point stackScroll = stackPane.getViewport().getViewLocation().getCopy();
         Point heapScroll = heapPane.getViewport().getViewLocation().getCopy();
+        int canvasScrollX = canvas.getViewport().getViewLocation().x;
         canvas.setRedraw(false);
         try {
             palette.refresh(canvas, settings.highlightChanges);
@@ -332,6 +355,11 @@ public class DiagramController {
         } finally {
             canvas.setRedraw(true);
         }
+        // A rebuild can change the diagram's natural (minimum) width, and the
+        // enclosing viewport derives its horizontal scroll range from that. Make
+        // the relayout explicit instead of leaning on child-add revalidation
+        // bubbling to the root, so the scroll range always tracks the new contents.
+        columnsLayer.revalidate();
         // Restore scroll positions once layout is valid; RangeModel clamps shrunken content.
         canvas.getDisplay().asyncExec(() -> {
             if (canvas.isDisposed()) {
@@ -339,6 +367,7 @@ public class DiagramController {
             }
             stackPane.getViewport().setViewLocation(stackScroll);
             heapPane.getViewport().setViewLocation(heapScroll);
+            canvas.scrollToX(canvasScrollX);
         });
     }
 
@@ -797,9 +826,10 @@ public class DiagramController {
         if (target == null) {
             return;
         }
-        RevealUtil.reveal(heapPane, target);
-        scrollThumbs.show(heapPane, true);
-        scrollThumbs.show(heapPane, false);
+        RevealUtil.reveal(heapPane, target); // vertical within the heap pane
+        RevealUtil.revealHorizontally(canvas.getViewport(), target); // bring the heap column into the window
+        scrollThumbs.show(heapPane.getViewport(), true);
+        scrollThumbs.show(canvas.getViewport(), false);
         target.setHoverHighlight(true);
         canvas.getDisplay().timerExec(FLASH_MILLIS, () -> {
             if (canvas.isDisposed()) {
@@ -813,15 +843,6 @@ public class DiagramController {
     }
 
     // ---------------------------------------------------------------- helpers
-
-    private void onSashRatioChanged(double ratio) {
-        settings.sashRatio = ratio;
-        columnsLayer.revalidate(); // pane contents move -> anchors fire -> arrows follow live
-    }
-
-    private int currentGutterWidth() {
-        return columnsLayout.currentGutter();
-    }
 
     private Rectangle gutterAbsolute() {
         Rectangle stackBounds = stackColumn.getBounds().getCopy();
