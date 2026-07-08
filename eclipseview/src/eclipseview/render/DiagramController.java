@@ -46,8 +46,6 @@ import eclipseview.render.figures.ContainerFigure;
 import eclipseview.render.figures.HeapObjectFigure;
 import eclipseview.render.figures.MoreRowFigure;
 import eclipseview.render.figures.ObjectPreviewFigure;
-import eclipseview.render.figures.StaticClassFigure;
-import eclipseview.render.figures.StaticsSectionFigure;
 import eclipseview.render.figures.VariableRowFigure;
 import eclipseview.ui.ViewSettings;
 
@@ -266,7 +264,12 @@ public class DiagramController {
         for (HeapObjectModel ghost : diff.deletedObjects()) {
             expansion.setObjectCollapsed(ghost.id(), true);
         }
-        expansion.setStaticsCollapsed(true);
+        for (StaticsClassModel staticsClass : snapshot.statics()) {
+            expansion.setStaticClassCollapsed(staticsClass.className(), true);
+        }
+        for (StaticsClassModel ghostClass : diff.deletedStaticClasses()) {
+            expansion.setStaticClassCollapsed(ghostClass.className(), true);
+        }
         rebuild();
     }
 
@@ -469,13 +472,6 @@ public class DiagramController {
             modelById.put(Long.valueOf(ghost.id()), ghost);
         }
 
-        boolean hasStatics = !snapshot.statics().isEmpty()
-                || (palette.isHighlighting()
-                        && (!diff.deletedStaticClasses().isEmpty() || !diff.deletedStaticFields().isEmpty()));
-        if (settings.showStatics && hasStatics) {
-            heapContents.add(buildStatics(refs));
-        }
-
         List<Long> order = HeapLayouter.assign(snapshot, ghosts, layoutMemory);
 
         // Heap cap chosen in extraction BFS order (heap map order): roots-first survival.
@@ -500,6 +496,15 @@ public class DiagramController {
         bodyLayout.setSpacing(16);
         bodyLayout.setStretchMinorAxis(false); // boxes take natural width <= 320
         heapBody.setLayoutManager(bodyLayout);
+
+        // Statics are heap roots: each class with static fields renders as its own
+        // container box at the top of the column, above the objects.
+        boolean hasStatics = !snapshot.statics().isEmpty()
+                || (palette.isHighlighting()
+                        && (!diff.deletedStaticClasses().isEmpty() || !diff.deletedStaticFields().isEmpty()));
+        if (settings.showStatics && hasStatics) {
+            buildStatics(refs, heapBody);
+        }
 
         for (Long id : order) {
             boolean ghost = ghostIds.contains(id);
@@ -642,49 +647,57 @@ public class DiagramController {
 
     // ---------------------------------------------------------------- statics
 
-    private StaticsSectionFigure buildStatics(List<PendingRef> refs) {
-        // Expanded by default; only a user click collapses it.
-        boolean collapsed = expansion.isStaticsCollapsed();
-        StaticsSectionFigure section = new StaticsSectionFigure(collapsed, palette, fonts, () -> {
-            expansion.setStaticsCollapsed(!collapsed);
-            rebuild();
-        });
-        if (collapsed) {
-            return section;
-        }
+    private void buildStatics(List<PendingRef> refs, Figure heapBody) {
         for (StaticsClassModel staticsClass : snapshot.statics()) {
-            StaticClassFigure classFigure = new StaticClassFigure(staticsClass.className(), false, palette, fonts);
-            renderCapped("statics:" + staticsClass.className(), staticsClass.fields().size(),
-                    settings.maxFieldsPerObjectRendered, i -> {
-                        FieldModel field = staticsClass.fields().get(i);
-                        ChangeStatus status = palette.effective(diff.staticStatusOf(field.fieldKey()));
-                        return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
-                    }, classFigure::addRow);
-            if (staticsClass.fieldsOmitted() > 0) {
-                classFigure.addRow(infoRow("(+" + staticsClass.fieldsOmitted() + " not captured)"));
-            }
-            if (palette.isHighlighting()) {
-                List<FieldModel> ghostFields = diff.deletedStaticFields().get(staticsClass.className());
-                if (ghostFields != null) {
-                    for (FieldModel field : ghostFields) {
-                        classFigure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(),
-                                ChangeStatus.DELETED, refs, false));
-                    }
-                }
-            }
-            section.addClassFigure(classFigure);
+            heapBody.add(buildStaticClass(staticsClass, false, refs));
         }
         if (palette.isHighlighting()) {
             for (StaticsClassModel ghostClass : diff.deletedStaticClasses()) {
-                StaticClassFigure classFigure = new StaticClassFigure(ghostClass.className(), true, palette, fonts);
-                for (FieldModel field : ghostClass.fields()) {
-                    classFigure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(),
-                            ChangeStatus.DELETED, refs, false));
-                }
-                section.addClassFigure(classFigure);
+                heapBody.add(buildStaticClass(ghostClass, true, refs));
             }
         }
-        return section;
+    }
+
+    /** One static-fields class as a container box titled "Class <name>" — same chrome as an object box. */
+    private ContainerFigure buildStaticClass(StaticsClassModel staticsClass, boolean ghost, List<PendingRef> refs) {
+        String className = staticsClass.className();
+        ChangeStatus status = ghost ? ChangeStatus.DELETED : ChangeStatus.UNCHANGED;
+        boolean collapsed = expansion.isStaticClassCollapsed(className);
+        ContainerFigure figure = new ContainerFigure("Class " + className, status, !collapsed, palette, fonts,
+                () -> {
+                    expansion.setStaticClassCollapsed(className, !collapsed);
+                    rebuild();
+                });
+        if (collapsed) {
+            return figure;
+        }
+        if (ghost) {
+            // Whole class removed: every field renders as a DELETED ghost row.
+            for (FieldModel field : staticsClass.fields()) {
+                figure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(),
+                        ChangeStatus.DELETED, refs, false));
+            }
+            return figure;
+        }
+        renderCapped("statics:" + className, staticsClass.fields().size(), settings.maxFieldsPerObjectRendered,
+                i -> {
+                    FieldModel field = staticsClass.fields().get(i);
+                    ChangeStatus fieldStatus = palette.effective(diff.staticStatusOf(field.fieldKey()));
+                    return newRow(field.name(), field.declaredTypeName(), field.value(), fieldStatus, refs, false);
+                }, figure::addRow);
+        if (staticsClass.fieldsOmitted() > 0) {
+            figure.addRow(infoRow("(+" + staticsClass.fieldsOmitted() + " not captured)"));
+        }
+        if (palette.isHighlighting()) {
+            List<FieldModel> ghostFields = diff.deletedStaticFields().get(className);
+            if (ghostFields != null) {
+                for (FieldModel field : ghostFields) {
+                    figure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(),
+                            ChangeStatus.DELETED, refs, false));
+                }
+            }
+        }
+        return figure;
     }
 
     // ------------------------------------------------------------------- rows
@@ -857,15 +870,13 @@ public class DiagramController {
      * Rightmost heap box edge (absolute) intersecting the [topY, bottomY] band —
      * the intra-heap arcs' bow baseline. Boxes align left but their right edges
      * are ragged, so an arc must clear every box it passes, not just its
-     * endpoints'. Children of the heap contents are the statics section (one
-     * box) and the heap body (whose children are the object boxes).
+     * endpoints'. The heap contents hold the heap body, whose children are the
+     * static-class boxes (at the top) and the object boxes.
      */
     private int heapArcBaseline(int topY, int bottomY) {
         int right = Integer.MIN_VALUE;
         for (IFigure child : heapContents.getChildren()) {
-            List<? extends IFigure> boxes =
-                    child instanceof StaticsSectionFigure ? List.of(child) : child.getChildren();
-            for (IFigure box : boxes) {
+            for (IFigure box : child.getChildren()) {
                 Rectangle bounds = box.getBounds().getCopy();
                 box.translateToAbsolute(bounds);
                 if (bounds.bottom() >= topY && bounds.y <= bottomY) {
