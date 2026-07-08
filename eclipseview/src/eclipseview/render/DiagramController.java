@@ -660,10 +660,13 @@ public class DiagramController {
 
     /** One static-fields class as a container box titled "Class <name>" — same chrome as an object box. */
     private ContainerFigure buildStaticClass(StaticsClassModel staticsClass, boolean ghost, List<PendingRef> refs) {
+        // Header shows the simple name; the fully-qualified className stays the
+        // stable key for collapse state, caps, and ghost-field lookup.
         String className = staticsClass.className();
         ChangeStatus status = ghost ? ChangeStatus.DELETED : ChangeStatus.UNCHANGED;
         boolean collapsed = expansion.isStaticClassCollapsed(className);
-        ContainerFigure figure = new ContainerFigure("Class " + className, status, !collapsed, palette, fonts,
+        ContainerFigure figure = new ContainerFigure("Class " + staticsClass.simpleName(), status, !collapsed,
+                palette, fonts,
                 () -> {
                     expansion.setStaticClassCollapsed(className, !collapsed);
                     rebuild();
