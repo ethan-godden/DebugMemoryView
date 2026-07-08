@@ -586,16 +586,14 @@ public class DiagramController {
                 String componentType = componentTypeOf(arr.typeName());
                 // The index is the identifier ("0 : <box>"); length lives in the header.
                 // The component type plays the declared type in the row tooltips.
-                renderCapped("arr:" + id, arr.elements().size(), settings.maxArrayElementsRendered, i -> {
-                    ChangeStatus status = ghost ? ChangeStatus.DELETED
-                            : palette.effective(diff.elementChanged(id, i) ? ChangeStatus.CHANGED
-                                    : ChangeStatus.UNCHANGED);
-                    return newRow(Integer.toString(i), componentType, arr.elements().get(i),
-                            status, refs, false);
-                }, figure::addRow);
-                if (arr.elementsOmitted() > 0) {
-                    figure.addRow(infoRow("(+" + arr.elementsOmitted() + " not captured)"));
-                }
+                populateMembers(figure, "arr:" + id, arr.elements().size(),
+                        settings.maxArrayElementsRendered, i -> {
+                            ChangeStatus status = ghost ? ChangeStatus.DELETED
+                                    : palette.effective(diff.elementChanged(id, i) ? ChangeStatus.CHANGED
+                                            : ChangeStatus.UNCHANGED);
+                            return newRow(Integer.toString(i), componentType, arr.elements().get(i),
+                                    status, refs, false);
+                        }, arr.elementsOmitted());
             }
             case FieldsObject fields -> {
                 if (fields instanceof EnumObject en && en.enumConstantName() != null) {
@@ -604,15 +602,13 @@ public class DiagramController {
                     hover.hookRow(constantRow);
                     figure.addRow(constantRow);
                 }
-                renderCapped("obj:" + id, fields.fields().size(), settings.maxFieldsPerObjectRendered, i -> {
-                    FieldModel field = fields.fields().get(i);
-                    ChangeStatus status = ghost ? ChangeStatus.DELETED
-                            : palette.effective(diff.fieldStatusOf(id, field.fieldKey()));
-                    return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
-                }, figure::addRow);
-                if (fields.fieldsOmitted() > 0) {
-                    figure.addRow(infoRow("(+" + fields.fieldsOmitted() + " not captured)"));
-                }
+                populateMembers(figure, "obj:" + id, fields.fields().size(),
+                        settings.maxFieldsPerObjectRendered, i -> {
+                            FieldModel field = fields.fields().get(i);
+                            ChangeStatus status = ghost ? ChangeStatus.DELETED
+                                    : palette.effective(diff.fieldStatusOf(id, field.fieldKey()));
+                            return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
+                        }, fields.fieldsOmitted());
             }
         }
     }
@@ -687,15 +683,12 @@ public class DiagramController {
             }
             return figure;
         }
-        renderCapped("statics:" + className, staticsClass.fields().size(), settings.maxFieldsPerObjectRendered,
-                i -> {
+        populateMembers(figure, "statics:" + className, staticsClass.fields().size(),
+                settings.maxFieldsPerObjectRendered, i -> {
                     FieldModel field = staticsClass.fields().get(i);
                     ChangeStatus fieldStatus = palette.effective(diff.staticStatusOf(field.fieldKey()));
                     return newRow(field.name(), field.declaredTypeName(), field.value(), fieldStatus, refs, false);
-                }, figure::addRow);
-        if (staticsClass.fieldsOmitted() > 0) {
-            figure.addRow(infoRow("(+" + staticsClass.fieldsOmitted() + " not captured)"));
-        }
+                }, staticsClass.fieldsOmitted());
         if (palette.isHighlighting()) {
             List<FieldModel> ghostFields = diff.deletedStaticFields().get(className);
             if (ghostFields != null) {
@@ -763,6 +756,20 @@ public class DiagramController {
             addRow.accept(moreRow(total - shown, capKey));
         }
         return shown;
+    }
+
+    /**
+     * A member box's body: up to the render cap of {@code count} rows (built by
+     * {@code rowFor}, with a "+N more…" expander when the cap bites), then a
+     * "(+N not captured)" info row for the {@code omitted} members dropped at
+     * extraction. Shared by object fields, array elements, and static fields.
+     */
+    private void populateMembers(ContainerFigure figure, String capKey, int count, int defaultMax,
+            IntFunction<IFigure> rowFor, int omitted) {
+        renderCapped(capKey, count, defaultMax, rowFor, figure::addRow);
+        if (omitted > 0) {
+            figure.addRow(infoRow("(+" + omitted + " not captured)"));
+        }
     }
 
     private MoreRowFigure moreRow(int hidden, String capKey) {
