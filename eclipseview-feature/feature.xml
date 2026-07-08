@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feature
+      id="DebugMemoryView.feature"
+      label="Debug Memory View"
+      version="1.0.0.qualifier"
+      provider-name="Ethan Godden">
+
+   <description url="https://github.com/ethangodden">
+      Live memory diagram view for suspended Java debug sessions.
+   </description>
+
+   <copyright>
+      Copyright (c) Ethan Godden.
+   </copyright>
+
+   <license>
+      All rights reserved.
+   </license>
+
+   <plugin
+         id="DebugMemoryView"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
+
+</feature>

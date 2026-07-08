@@ -1,0 +1,9 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: Debug Memory View Tests
+Bundle-SymbolicName: DebugMemoryView.tests
+Bundle-Version: 1.0.0.qualifier
+Fragment-Host: DebugMemoryView
+Bundle-RequiredExecutionEnvironment: JavaSE-21
+Automatic-Module-Name: eclipseview.tests
+Import-Package: org.junit.jupiter.api

@@ -2,3 +2,8 @@
 
 # Eclipse workspace state — local, churns constantly, should not be tracked
 /.metadata/
+
+# Maven / Tycho build output
+target/
+# PDE compiled output (per-module)
+bin/
