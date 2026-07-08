@@ -14,13 +14,13 @@ import org.eclipse.swt.widgets.Display;
 import eclipseview.model.diff.ChangeStatus;
 
 /**
- * A reference arrow, colored by the SOURCE row's change status, painted as a
- * cubic bezier (control points supplied by the router) with a filled tail dot
- * sitting inside the source row's value box. The router still setPoints() so
- * bounds and the arrowhead decoration work; the straight segments themselves
- * are never drawn. Paints at alpha 90 (clip-and-fade) when either endpoint is
- * scrolled out of its pane; the clipping strategy stops the curve exactly at
- * the pane border.
+ * A reference arrow, colored by the SOURCE row's change status, with a filled
+ * tail dot sitting inside the source row's value box. Painted (all supplied by
+ * the router) as a cubic bezier from the tail dot, then a short straight stub
+ * into the arrowhead — so the head runs horizontally regardless of the curve's
+ * shape. The router still setPoints() so bounds and the arrowhead decoration
+ * work. Paints at alpha 90 (clip-and-fade) when either endpoint is scrolled out
+ * of its pane; the clipping strategy stops the curve exactly at the pane border.
  */
 public class StateConnection extends PolylineConnection {
 
@@ -31,8 +31,11 @@ public class StateConnection extends PolylineConnection {
     private final int laneIndex;
     private final Color baseColor;
 
-    // Bezier control points in the connection's coordinates, set by the router
-    // right before setPoints() (null only until the first routing pass).
+    // Bezier end + control points in the connection's coordinates, set by the
+    // router right before setPoints() (null only until the first routing pass).
+    // The curve runs start..curveEnd; curveEnd->end is the fixed straight head stub
+    // into the arrowhead (the tail dot is at start, painted straight from the curve).
+    private Point curveEnd;
     private Point curveC1;
     private Point curveC2;
 
@@ -56,9 +59,10 @@ public class StateConnection extends PolylineConnection {
     }
 
     /** Called by the router before setPoints(); the curve repaints with the points. */
-    public void setControlPoints(Point c1, Point c2) {
-        curveC1 = c1;
-        curveC2 = c2;
+    public void setCurve(Point c1, Point c2, Point curveEnd) {
+        this.curveEnd = curveEnd;
+        this.curveC1 = c1;
+        this.curveC2 = c2;
     }
 
     public void setHover(boolean on, ColorPalette palette) {
@@ -88,14 +92,17 @@ public class StateConnection extends PolylineConnection {
         }
         Point start = points.getFirstPoint();
         Point end = points.getLastPoint();
-        if (curveC1 == null || curveC2 == null) {
+        if (curveEnd == null || curveC1 == null || curveC2 == null) {
             graphics.drawPolyline(points); // no routing pass yet; degrade gracefully
         } else {
             // SWT Path (device resource): built per paint and disposed immediately.
+            // The cubic straight from the tail dot, then a straight stub into the
+            // arrowhead — one continuous path.
             Path path = new Path(Display.getCurrent());
             try {
                 path.moveTo(start.x, start.y);
-                path.cubicTo(curveC1.x, curveC1.y, curveC2.x, curveC2.y, end.x, end.y);
+                path.cubicTo(curveC1.x, curveC1.y, curveC2.x, curveC2.y, curveEnd.x, curveEnd.y);
+                path.lineTo(end.x, end.y);
                 graphics.drawPath(path);
             } finally {
                 path.dispose();

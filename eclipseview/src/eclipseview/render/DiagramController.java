@@ -42,10 +42,10 @@ import eclipseview.model.VariableModel;
 import eclipseview.model.diff.ChangeStatus;
 import eclipseview.model.diff.MemoryDiff;
 import eclipseview.render.figures.ColumnFigure;
+import eclipseview.render.figures.ContainerFigure;
 import eclipseview.render.figures.HeapObjectFigure;
 import eclipseview.render.figures.MoreRowFigure;
 import eclipseview.render.figures.ObjectPreviewFigure;
-import eclipseview.render.figures.StackFrameFigure;
 import eclipseview.render.figures.StaticClassFigure;
 import eclipseview.render.figures.StaticsSectionFigure;
 import eclipseview.render.figures.VariableRowFigure;
@@ -416,7 +416,7 @@ public class DiagramController {
             ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.frameStatusOf(frameKey));
             // Every frame builds its rows eagerly; only user-collapsed frames stay shut.
             boolean expanded = !expansion.isFrameCollapsed(frameKey);
-            StackFrameFigure figure = new StackFrameFigure(frame.label(), status, expanded, palette, fonts, () -> {
+            ContainerFigure figure = new ContainerFigure(frame.label(), status, expanded, palette, fonts, () -> {
                 expansion.setFrameCollapsed(frameKey, expanded);
                 rebuild();
             });
@@ -430,7 +430,7 @@ public class DiagramController {
         }
     }
 
-    private void populateFrame(StackFrameFigure figure, StackFrameModel frame, boolean ghost,
+    private void populateFrame(ContainerFigure figure, StackFrameModel frame, boolean ghost,
             List<PendingRef> refs) {
         String frameKey = frame.frameKey();
         if (frame.obsolete()) {

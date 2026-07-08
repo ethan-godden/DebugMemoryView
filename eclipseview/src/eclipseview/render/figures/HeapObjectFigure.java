@@ -1,77 +1,38 @@
 package eclipseview.render.figures;
 
-import org.eclipse.draw2d.Border;
-import org.eclipse.draw2d.CompoundBorder;
-import org.eclipse.draw2d.Figure;
-import org.eclipse.draw2d.Graphics;
 import org.eclipse.draw2d.IFigure;
-import org.eclipse.draw2d.Label;
-import org.eclipse.draw2d.LineBorder;
-import org.eclipse.draw2d.MarginBorder;
-import org.eclipse.draw2d.ToolbarLayout;
 import org.eclipse.draw2d.geometry.Dimension;
-import org.eclipse.swt.SWT;
 
 import eclipseview.model.diff.ChangeStatus;
 import eclipseview.render.ColorPalette;
 import eclipseview.render.FontKit;
 
 /**
- * One heap object box: header ("Type #id") + field / element / value rows.
- * The border encodes the object's change status; DELETED objects render as
- * ghosts (alpha 110 + dashed border). Single-click on the ▾/▸ header toggles
- * the box collapsed to header-only (same affordance as StackFrameFigure).
- * Aliasing shows structurally: every reference row
+ * One heap object box (also used for arrays): a {@link ContainerFigure} whose
+ * rows are field / element / value / STRING-char cells, keyed by object id. On
+ * top of the shared container it adds hover highlighting (border recolored to
+ * the accent), a width clamp to the heap column, and the reference-target row
+ * that inbound arrows land on. Aliasing shows structurally: every reference row
  * with the same target id anchors to the same figure's first body row (see
  * {@link #getReferenceTargetFigure()}).
  */
-public class HeapObjectFigure extends Figure {
+public class HeapObjectFigure extends ContainerFigure {
 
     /** Preferred-size floor only; the minimum may go lower so a narrow column can squeeze the box. */
     public static final int MIN_WIDTH = 112;
     public static final int MAX_WIDTH = 320;
 
     private final long id;
-    private final Label header;
-    private final Figure body;
-    private final boolean ghost;
-    private final Border baseBorder;
-    private final ColorPalette palette;
     private boolean hoverHighlight;
 
     public HeapObjectFigure(long id, String title, ChangeStatus status, boolean collapsed,
             ColorPalette palette, FontKit fonts, Runnable onToggle) {
+        super(title, status, !collapsed, palette, fonts, onToggle);
         this.id = id;
-        this.palette = palette;
-        ghost = status == ChangeStatus.DELETED;
-        ToolbarLayout layout = new ToolbarLayout(false);
-        layout.setStretchMinorAxis(true);
-        setLayoutManager(layout);
-        setOpaque(true);
-        setBackgroundColor(palette.boxBackground());
-        baseBorder = borderFor(status, palette);
-        setBorder(baseBorder);
-
-        header = BoxFigures.collapsibleHeader(title, !collapsed, ghost, palette, fonts);
-        add(header);
-
-        body = new Figure();
-        ToolbarLayout bodyLayout = new ToolbarLayout(false);
-        bodyLayout.setStretchMinorAxis(true);
-        body.setLayoutManager(bodyLayout);
-        if (!collapsed) {
-            add(body);
-        }
-
-        BoxFigures.attachToggle(header, onToggle);
     }
 
     public long id() {
         return id;
-    }
-
-    public void addRow(IFigure row) {
-        body.add(row);
     }
 
     /** Tooltip on the header label (STRING boxes: the full quoted content). */
@@ -101,19 +62,9 @@ public class HeapObjectFigure extends Figure {
             return;
         }
         hoverHighlight = on;
-        setBorder(on ? new LineBorder(palette.hoverAccent(), 2) : baseBorder);
+        // Same width/style as the base border, recolored — the box never resizes.
+        setBorder(borderFor(status, palette, on));
         repaint();
-    }
-
-    // Every border reserves 2px of insets (the 1px lines pad with a margin), so
-    // the hover swap to a 2px accent border never changes the box's geometry.
-    private static Border borderFor(ChangeStatus status, ColorPalette palette) {
-        return switch (status) {
-            case NEW, CHANGED -> new LineBorder(palette.statusForeground(status), 2);
-            case DELETED -> new CompoundBorder(
-                    new LineBorder(palette.deletedForeground(), 1, SWT.LINE_DASH), new MarginBorder(1));
-            case UNCHANGED -> new CompoundBorder(new LineBorder(palette.boxBorder(), 1), new MarginBorder(1));
-        };
     }
 
     @Override
@@ -134,13 +85,5 @@ public class HeapObjectFigure extends Figure {
         Dimension size = super.getMinimumSize(wHint, hHint).getCopy();
         size.width = Math.min(size.width, MAX_WIDTH);
         return size;
-    }
-
-    @Override
-    public void paint(Graphics graphics) {
-        if (ghost) {
-            graphics.setAlpha(110); // inherits to header and rows
-        }
-        super.paint(graphics);
     }
 }
