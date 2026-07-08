@@ -1,1 +1,4 @@
 .DS_Store
+
+# Eclipse workspace state — local, churns constantly, should not be tracked
+/.metadata/
