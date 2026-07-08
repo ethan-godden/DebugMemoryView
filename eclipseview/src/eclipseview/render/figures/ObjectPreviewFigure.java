@@ -12,6 +12,12 @@ import org.eclipse.draw2d.ToolbarLayout;
 
 import eclipseview.model.FieldModel;
 import eclipseview.model.HeapObjectModel;
+import eclipseview.model.HeapObjectModel.ArrayObject;
+import eclipseview.model.HeapObjectModel.BoxedObject;
+import eclipseview.model.HeapObjectModel.EnumObject;
+import eclipseview.model.HeapObjectModel.FieldsObject;
+import eclipseview.model.HeapObjectModel.StringObject;
+import eclipseview.model.HeapObjectModel.StubObject;
 import eclipseview.model.ValueModel;
 import eclipseview.render.ColorPalette;
 import eclipseview.render.Ellipsis;
@@ -57,42 +63,41 @@ public class ObjectPreviewFigure extends Figure {
 
     /** Fills up to MAX_LINES display lines; returns how many content lines were omitted. */
     private static int collectLines(HeapObjectModel model, List<String> lines) {
-        switch (model.kind()) {
-            case STRING -> {
-                lines.add("\"" + Ellipsis.clipChars(model.displayText(), MAX_LINE_CHARS)
-                        + (model.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\"");
-                return 0;
+        return switch (model) {
+            case StringObject str -> {
+                lines.add("\"" + Ellipsis.clipChars(str.displayText(), MAX_LINE_CHARS)
+                        + (str.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\"");
+                yield 0;
             }
-            case BOXED -> {
-                lines.add(model.displayText() + (model.jvmCached() ? "  (JVM cache)" : ""));
-                return 0;
+            case BoxedObject box -> {
+                lines.add(box.displayText() + (box.jvmCached() ? "  (JVM cache)" : ""));
+                yield 0;
             }
-            case STUB -> {
+            case StubObject stub -> {
                 lines.add("(not explored)");
-                return 0;
+                yield 0;
             }
-            case ARRAY -> {
-                lines.add("length = " + model.arrayLength());
-                int shown = Math.min(model.elements().size(), MAX_LINES - 1);
+            case ArrayObject arr -> {
+                lines.add("length = " + arr.arrayLength());
+                int shown = Math.min(arr.elements().size(), MAX_LINES - 1);
                 for (int i = 0; i < shown; i++) {
-                    ValueModel element = model.elements().get(i);
+                    ValueModel element = arr.elements().get(i);
                     lines.add("[" + i + "] = " + Ellipsis.valueText(element, MAX_LINE_CHARS));
                 }
-                return model.elements().size() + model.elementsOmitted() - shown;
+                yield arr.elements().size() + arr.elementsOmitted() - shown;
             }
-            case ENUM, PLAIN -> {
-                if (model.enumConstantName() != null) {
-                    lines.add(model.enumConstantName());
+            case FieldsObject fields -> {
+                if (fields instanceof EnumObject en && en.enumConstantName() != null) {
+                    lines.add(en.enumConstantName());
                 }
-                int shown = Math.min(model.fields().size(), MAX_LINES - lines.size());
+                int shown = Math.min(fields.fields().size(), MAX_LINES - lines.size());
                 for (int i = 0; i < shown; i++) {
-                    FieldModel field = model.fields().get(i);
+                    FieldModel field = fields.fields().get(i);
                     lines.add(field.name() + " = " + Ellipsis.valueText(field.value(), MAX_LINE_CHARS));
                 }
-                return model.fields().size() + model.fieldsOmitted() - shown;
+                yield fields.fields().size() + fields.fieldsOmitted() - shown;
             }
-        }
-        return 0;
+        };
     }
 
     private static Label bodyLine(String text, ColorPalette palette, FontKit fonts) {

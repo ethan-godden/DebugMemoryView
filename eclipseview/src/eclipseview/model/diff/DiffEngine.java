@@ -10,8 +10,12 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import eclipseview.model.FieldModel;
-import eclipseview.model.HeapObjectKind;
 import eclipseview.model.HeapObjectModel;
+import eclipseview.model.HeapObjectModel.ArrayObject;
+import eclipseview.model.HeapObjectModel.BoxedObject;
+import eclipseview.model.HeapObjectModel.FieldsObject;
+import eclipseview.model.HeapObjectModel.StringObject;
+import eclipseview.model.HeapObjectModel.StubObject;
 import eclipseview.model.HeapReference;
 import eclipseview.model.MemorySnapshot;
 import eclipseview.model.NullValue;
@@ -130,34 +134,38 @@ public final class DiffEngine {
     private static ChangeStatus diffExploredObject(HeapObjectModel old, HeapObjectModel obj,
             Map<Long, Map<String, ChangeStatus>> fieldStatus, Map<Long, BitSet> changedElements) {
 
-        switch (obj.kind()) {
-            case STRING, BOXED, ENUM -> {
-                // Immutable content per identity; same id means unchanged.
-                if (obj.kind() == HeapObjectKind.ENUM) {
-                    break; // enums can have mutable fields — fall through to field diff
-                }
-                return ChangeStatus.UNCHANGED;
-            }
-            case ARRAY -> {
-                boolean changed = obj.arrayLength() != old.arrayLength();
-                BitSet bits = new BitSet();
-                int common = Math.min(obj.elements().size(), old.elements().size());
-                for (int i = 0; i < common; i++) {
-                    if (!valueEquals(obj.elements().get(i), old.elements().get(i))) {
-                        bits.set(i);
-                    }
-                }
-                if (!bits.isEmpty()) {
-                    changedElements.put(obj.id(), bits);
-                    changed = true;
-                }
-                return changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED;
-            }
-            default -> {
-                // PLAIN handled below
+        // Both sides are explored (the caller gated on that) and share an id, so a
+        // given id keeps its concrete shape across snapshots — old casts to obj's variant.
+        return switch (obj) {
+            // Immutable content per identity; same id means unchanged.
+            case StringObject s -> ChangeStatus.UNCHANGED;
+            case BoxedObject b -> ChangeStatus.UNCHANGED;
+            // Unreachable: the caller returns before ever diffing an unexplored object.
+            case StubObject s -> ChangeStatus.UNCHANGED;
+            case ArrayObject arr -> diffArray((ArrayObject) old, arr, changedElements);
+            // PLAIN and ENUM: enums can carry mutable fields, so both diff field-by-field.
+            case FieldsObject fields -> diffFieldsObject((FieldsObject) old, fields, fieldStatus);
+        };
+    }
+
+    private static ChangeStatus diffArray(ArrayObject old, ArrayObject arr, Map<Long, BitSet> changedElements) {
+        boolean changed = arr.arrayLength() != old.arrayLength();
+        BitSet bits = new BitSet();
+        int common = Math.min(arr.elements().size(), old.elements().size());
+        for (int i = 0; i < common; i++) {
+            if (!valueEquals(arr.elements().get(i), old.elements().get(i))) {
+                bits.set(i);
             }
         }
+        if (!bits.isEmpty()) {
+            changedElements.put(arr.id(), bits);
+            changed = true;
+        }
+        return changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED;
+    }
 
+    private static ChangeStatus diffFieldsObject(FieldsObject old, FieldsObject obj,
+            Map<Long, Map<String, ChangeStatus>> fieldStatus) {
         Map<String, ChangeStatus> byField = new HashMap<>();
         // Vanished fields (hot code replace) only flag the box CHANGED; no ghost rows inside a heap box.
         boolean changed = diffFields(old.fields(), obj.fields(), byField::put, deleted -> { });

@@ -28,8 +28,13 @@ import org.eclipse.jface.resource.ResourceManager;
 import org.eclipse.swt.SWT;
 
 import eclipseview.model.FieldModel;
-import eclipseview.model.HeapObjectKind;
 import eclipseview.model.HeapObjectModel;
+import eclipseview.model.HeapObjectModel.ArrayObject;
+import eclipseview.model.HeapObjectModel.BoxedObject;
+import eclipseview.model.HeapObjectModel.EnumObject;
+import eclipseview.model.HeapObjectModel.FieldsObject;
+import eclipseview.model.HeapObjectModel.StringObject;
+import eclipseview.model.HeapObjectModel.StubObject;
 import eclipseview.model.HeapReference;
 import eclipseview.model.MemorySnapshot;
 import eclipseview.model.NullValue;
@@ -532,11 +537,11 @@ public class DiagramController {
                     expansion.setObjectCollapsed(id, !collapsed);
                     rebuild();
                 });
-        if (model.kind() == HeapObjectKind.STRING) {
+        if (model instanceof StringObject str) {
             // Full quoted content on the header (rows are char cells); works collapsed too.
-            String content = model.displayText() != null ? model.displayText() : "";
+            String content = str.displayText() != null ? str.displayText() : "";
             figure.setHeaderToolTip(tooltipLabel(
-                    "\"" + content + (model.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\""));
+                    "\"" + content + (str.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\""));
         }
         if (!collapsed) {
             populateObject(figure, model, ghost, refs);
@@ -549,13 +554,13 @@ public class DiagramController {
             List<PendingRef> refs) {
         long id = model.id();
         ChangeStatus plainStatus = ghost ? ChangeStatus.DELETED : ChangeStatus.UNCHANGED;
-        switch (model.kind()) {
-            case STRING -> {
+        switch (model) {
+            case StringObject str -> {
                 // Char-array rendering: one indexed cell per extracted character
                 // ("0 : [h]"), capped like an array. Strings are immutable-by-identity
                 // in the diff (no per-element statuses); rows stay UNCHANGED-styled.
                 // The full quoted content lives in the header tooltip (buildObjectFigure).
-                String content = model.displayText() != null ? model.displayText() : "";
+                String content = str.displayText() != null ? str.displayText() : "";
                 // Chars are capped like an array; only unrendered EXTRACTED chars count toward "+N more".
                 renderCapped("str:" + id, content.length(), settings.maxArrayElementsRendered, i -> {
                     char c = content.charAt(i);
@@ -565,48 +570,48 @@ public class DiagramController {
                     row.setToolTip(tooltipLabel("char : '" + c + "'"));
                     return row;
                 }, figure::addRow);
-                if (model.textTruncated()) {
+                if (str.textTruncated()) {
                     figure.addRow(infoRow("(truncated)"));
                 }
             }
-            case BOXED -> {
-                String value = model.displayText() != null ? model.displayText() : "?";
-                String text = value + (model.jvmCached() ? "  (JVM cache)" : "");
+            case BoxedObject box -> {
+                String value = box.displayText() != null ? box.displayText() : "?";
+                String text = value + (box.jvmCached() ? "  (JVM cache)" : "");
                 VariableRowFigure row = new VariableRowFigure(null, text, null, plainStatus, palette, fonts);
                 hover.hookRow(row);
                 figure.addRow(row);
             }
-            case STUB -> figure.addRow(infoRow("(not explored)"));
-            case ARRAY -> {
-                String componentType = componentTypeOf(model.typeName());
+            case StubObject stub -> figure.addRow(infoRow("(not explored)"));
+            case ArrayObject arr -> {
+                String componentType = componentTypeOf(arr.typeName());
                 // The index is the identifier ("0 : <box>"); length lives in the header.
                 // The component type plays the declared type in the row tooltips.
-                renderCapped("arr:" + id, model.elements().size(), settings.maxArrayElementsRendered, i -> {
+                renderCapped("arr:" + id, arr.elements().size(), settings.maxArrayElementsRendered, i -> {
                     ChangeStatus status = ghost ? ChangeStatus.DELETED
                             : palette.effective(diff.elementChanged(id, i) ? ChangeStatus.CHANGED
                                     : ChangeStatus.UNCHANGED);
-                    return newRow(Integer.toString(i), componentType, model.elements().get(i),
+                    return newRow(Integer.toString(i), componentType, arr.elements().get(i),
                             status, refs, false);
                 }, figure::addRow);
-                if (model.elementsOmitted() > 0) {
-                    figure.addRow(infoRow("(+" + model.elementsOmitted() + " not captured)"));
+                if (arr.elementsOmitted() > 0) {
+                    figure.addRow(infoRow("(+" + arr.elementsOmitted() + " not captured)"));
                 }
             }
-            case ENUM, PLAIN -> {
-                if (model.enumConstantName() != null) {
-                    VariableRowFigure constantRow = new VariableRowFigure(null, model.enumConstantName(),
+            case FieldsObject fields -> {
+                if (fields instanceof EnumObject en && en.enumConstantName() != null) {
+                    VariableRowFigure constantRow = new VariableRowFigure(null, en.enumConstantName(),
                             null, plainStatus, palette, fonts);
                     hover.hookRow(constantRow);
                     figure.addRow(constantRow);
                 }
-                renderCapped("obj:" + id, model.fields().size(), settings.maxFieldsPerObjectRendered, i -> {
-                    FieldModel field = model.fields().get(i);
+                renderCapped("obj:" + id, fields.fields().size(), settings.maxFieldsPerObjectRendered, i -> {
+                    FieldModel field = fields.fields().get(i);
                     ChangeStatus status = ghost ? ChangeStatus.DELETED
                             : palette.effective(diff.fieldStatusOf(id, field.fieldKey()));
                     return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
                 }, figure::addRow);
-                if (model.fieldsOmitted() > 0) {
-                    figure.addRow(infoRow("(+" + model.fieldsOmitted() + " not captured)"));
+                if (fields.fieldsOmitted() > 0) {
+                    figure.addRow(infoRow("(+" + fields.fieldsOmitted() + " not captured)"));
                 }
             }
         }
@@ -621,11 +626,11 @@ public class DiagramController {
     }
 
     private static String objectTitle(HeapObjectModel model) {
-        if (model.kind() == HeapObjectKind.ARRAY) {
-            String simple = model.simpleName() != null ? model.simpleName() : "?[]";
+        if (model instanceof ArrayObject arr) {
+            String simple = arr.simpleName() != null ? arr.simpleName() : "?[]";
             int bracket = simple.indexOf("[]");
             String base = bracket >= 0 ? simple.substring(0, bracket) : simple;
-            return base + "[" + model.arrayLength() + "] #" + model.id();
+            return base + "[" + arr.arrayLength() + "] #" + arr.id();
         }
         return model.simpleName() + " #" + model.id();
     }

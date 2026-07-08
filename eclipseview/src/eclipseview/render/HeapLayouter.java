@@ -10,8 +10,12 @@ import java.util.List;
 import java.util.Set;
 
 import eclipseview.model.FieldModel;
-import eclipseview.model.HeapObjectKind;
 import eclipseview.model.HeapObjectModel;
+import eclipseview.model.HeapObjectModel.ArrayObject;
+import eclipseview.model.HeapObjectModel.BoxedObject;
+import eclipseview.model.HeapObjectModel.FieldsObject;
+import eclipseview.model.HeapObjectModel.StringObject;
+import eclipseview.model.HeapObjectModel.StubObject;
 import eclipseview.model.HeapReference;
 import eclipseview.model.MemorySnapshot;
 import eclipseview.model.StackFrameModel;
@@ -105,17 +109,19 @@ public final class HeapLayouter {
     }
 
     private static List<ValueModel> outgoing(HeapObjectModel obj) {
-        if (obj.kind() == HeapObjectKind.ARRAY) {
-            return obj.elements();
-        }
-        if (obj.kind() == HeapObjectKind.PLAIN || obj.kind() == HeapObjectKind.ENUM) {
-            List<ValueModel> values = new ArrayList<>(obj.fields().size());
-            for (FieldModel field : obj.fields()) {
-                values.add(field.value());
+        return switch (obj) {
+            case ArrayObject arr -> arr.elements();
+            case FieldsObject fields -> {
+                List<ValueModel> values = new ArrayList<>(fields.fields().size());
+                for (FieldModel field : fields.fields()) {
+                    values.add(field.value());
+                }
+                yield values;
             }
-            return values;
-        }
-        return List.of();
+            case StubObject s -> List.of();
+            case StringObject s -> List.of();
+            case BoxedObject b -> List.of();
+        };
     }
 
     private static void enqueueRoot(ValueModel value, MemorySnapshot snapshot,
