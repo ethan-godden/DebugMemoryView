@@ -14,7 +14,9 @@ items render exactly once as translucent *ghosts*.
 The plug-in contributes a view named **Memory Diagram** (in the **Debug** category). The bundle is
 `DebugMemoryView`; the installable feature is labelled *Debug Memory View*.
 
-<!-- TODO: add a screenshot of the Memory Diagram view on a suspended session, e.g. docs/screenshot.png -->
+<p align="center">
+  <img src="docs/screenshot.png" width="520" alt="The Memory Diagram view rendering a suspended Java session: stack frame, heap objects, arrays, strings, boxed values, and statics with change highlighting and reference arrows">
+</p>
 
 ## Features
 
