@@ -79,8 +79,6 @@ public final class SnapshotPipeline {
     private final ConcurrentLinkedQueue<String> pendingBaselineCleanups = new ConcurrentLinkedQueue<>();
 
     private volatile String lastPublishedTargetKey;
-    private volatile String lastPublishedThreadKey;
-
     // Job-thread-confined state (accessed only inside SnapshotJob.run).
     private final Map<String, Baseline> baselines = new HashMap<>();
 
@@ -174,7 +172,6 @@ public final class SnapshotPipeline {
         job.schedule(DEBOUNCE_MS); // ensures the Job-confined baselines get dropped
         if (targetKey.equals(lastPublishedTargetKey)) {
             lastPublishedTargetKey = null;
-            lastPublishedThreadKey = null;
             uiPost(c -> c.cleared("terminated")); //$NON-NLS-1$
         }
     }
@@ -186,7 +183,6 @@ public final class SnapshotPipeline {
             current = null;
         }
         lastPublishedTargetKey = null;
-        lastPublishedThreadKey = null;
         uiPost(c -> c.cleared(reason));
     }
 
@@ -384,7 +380,7 @@ public final class SnapshotPipeline {
                 return; // superseded while queued
             }
             lastPublishedTargetKey = snapshot.debugTargetKey();
-            lastPublishedThreadKey = snapshot.threadKey();
+            snapshot.threadKey();
             for (ISnapshotConsumer consumer : consumers) {
                 consumer.snapshotReady(snapshot, diff);
             }

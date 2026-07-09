@@ -27,7 +27,6 @@ public class StateConnection extends PolylineConnection {
     private static final int FADED_ALPHA = 90;
     private static final int DOT_DIAMETER = 6;
 
-    private final ChangeStatus sourceStatus;
     private final int laneIndex;
     private final Color baseColor;
 
@@ -40,7 +39,6 @@ public class StateConnection extends PolylineConnection {
     private Point curveC2;
 
     public StateConnection(ChangeStatus sourceStatus, int laneIndex, ColorPalette palette) {
-        this.sourceStatus = sourceStatus;
         this.laneIndex = laneIndex;
         baseColor = palette.connectionColor(sourceStatus);
         setForegroundColor(baseColor);
