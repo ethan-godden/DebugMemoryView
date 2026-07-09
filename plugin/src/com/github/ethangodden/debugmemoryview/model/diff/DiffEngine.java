@@ -51,9 +51,12 @@ public final class DiffEngine {
         diffHeap(prev, curr, objectStatus, fieldStatus, changedElements, deletedObjects);
         diffStatics(prev, curr, staticStatus, deletedStaticClasses, deletedStaticFields);
 
-        return new MemoryDiff(prev.sequence(), frameStatus, variableStatus, objectStatus, fieldStatus,
-                changedElements, staticStatus, deletedFrames, deletedVariables, deletedObjects,
-                deletedStaticClasses, deletedStaticFields);
+        // Publish immutable views so the diff honors the "diffs are immutable" invariant.
+        return new MemoryDiff(prev.sequence(), Map.copyOf(frameStatus), Map.copyOf(variableStatus),
+                Map.copyOf(objectStatus), Map.copyOf(fieldStatus), Map.copyOf(changedElements),
+                Map.copyOf(staticStatus), List.copyOf(deletedFrames), Map.copyOf(deletedVariables),
+                List.copyOf(deletedObjects), List.copyOf(deletedStaticClasses),
+                Map.copyOf(deletedStaticFields));
     }
 
     private static void diffFrames(MemorySnapshot prev, MemorySnapshot curr,

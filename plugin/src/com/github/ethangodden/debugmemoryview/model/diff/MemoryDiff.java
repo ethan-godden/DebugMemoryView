@@ -53,7 +53,8 @@ public record MemoryDiff(
                 statics.put(f.fieldKey(), ChangeStatus.NEW);
             }
         }
-        return new MemoryDiff(-1, frames, variables, objects, Map.of(), Map.of(), statics,
+        return new MemoryDiff(-1, Map.copyOf(frames), Map.copyOf(variables), Map.copyOf(objects),
+                Map.of(), Map.of(), Map.copyOf(statics),
                 List.of(), Map.of(), List.of(), List.of(), Map.of());
     }
 
