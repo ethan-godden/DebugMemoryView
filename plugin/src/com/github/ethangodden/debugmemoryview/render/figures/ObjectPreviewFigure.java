@@ -70,7 +70,8 @@ public class ObjectPreviewFigure extends Figure {
                 yield 0;
             }
             case BoxedObject box -> {
-                lines.add(box.displayText() + (box.jvmCached() ? "  (JVM cache)" : ""));
+                String value = box.displayText() != null ? box.displayText() : "?";
+                lines.add(value + (box.jvmCached() ? "  (JVM cache)" : ""));
                 yield 0;
             }
             case StubObject stub -> {
