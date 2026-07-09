@@ -169,6 +169,11 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         if (pinned) {
             pendingSnapshot = snapshot;
             pendingDiff = diff;
+            // The pinned thread re-suspended: drop the "Running…" veil that
+            // threadResumed() painted, while keeping the frozen diagram on screen.
+            if (displayed != null && snapshot.threadKey().equals(displayed.threadKey())) {
+                controller.setRunning(false);
+            }
             return;
         }
         display(snapshot, diff);
