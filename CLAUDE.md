@@ -29,7 +29,7 @@ deleted items render exactly once as translucent "ghosts".
   Eclipse.)
 - `runtime-EclipseApplication/` — the runtime workspace used when launching the
   plug-in as an Eclipse Application; create a small Java project here to debug
-  against. Its `.metadata` is gitignored.
+  against. The directory itself is gitignored — Eclipse recreates it on first launch.
 - `parent/` — the Maven reactor parent (`pom.xml`), with no source; aggregates all sibling modules via `../` paths.
 - The repo root has no `pom.xml` (it doubles as the Eclipse workspace, kept flat so every
   module plus `parent/` imports as a non-overlapping project); build with `mvn -f parent`

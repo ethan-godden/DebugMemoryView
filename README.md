@@ -116,9 +116,9 @@ pull request and uploads the update-site zip as a build artifact.
 1. Open the repository root as your Eclipse workspace; each module (plus `parent/`) imports as its
    own project.
 2. Run the checked-in launch config **`plugin/DebugMemoryView.launch`** (*Run As ▸ Eclipse
-   Application*). It starts a runtime Eclipse using **`runtime-EclipseApplication/`** as its
-   workspace. (The launch targets the EPP *RCP and RAP Developers* product; adjust the launch's
-   product if your host Eclipse doesn't provide it.)
+   Application*). It starts a runtime Eclipse using a `runtime-EclipseApplication/` workspace —
+   created in the repo root on first launch and gitignored. (The launch targets the EPP *RCP and RAP
+   Developers* product; adjust the launch's product if your host Eclipse doesn't provide it.)
 3. In the runtime Eclipse, create a small Java project, set a breakpoint, debug it, and open the
    **Memory Diagram** view.
 
@@ -135,7 +135,6 @@ pair (call `controller.setSnapshot(DevFixture.snapshot(), DevFixture.diff())` fr
 | `repository/` | The p2 update site (`category.xml`); produces the shipped zip. |
 | `targetplatform/` | The Tycho target definition pinning the Eclipse 2026-06 release train. |
 | `parent/` | The Maven reactor parent (aggregates the modules; build entry point). |
-| `runtime-EclipseApplication/` | Runtime workspace for the *Run from source* launch (its `.metadata` is gitignored). |
 
 Releases are cut by pushing a version tag: `git tag v1.0.0 && git push origin v1.0.0` triggers
 `.github/workflows/release.yml`, which builds, tests, and publishes the update-site zip as a GitHub

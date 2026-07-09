@@ -2,6 +2,8 @@
 
 # Eclipse workspace state — local, churns constantly, should not be tracked
 /.metadata/
+# Runtime workspace for the Eclipse Application launch — created on launch, not tracked
+/runtime-EclipseApplication/
 
 # Maven / Tycho build output
 target/
