@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <feature
-      id="feature"
+      id="com.github.ethangodden.debugmemoryview.feature"
       label="Debug Memory View"
       version="1.0.0.qualifier"
       provider-name="Ethan Godden">
