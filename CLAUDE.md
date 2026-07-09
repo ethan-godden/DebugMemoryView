@@ -11,24 +11,25 @@ reference arrows on a Draw2d canvas. Between suspends it diffs consecutive
 snapshots of the same thread and highlights changes (NEW / CHANGED / DELETED);
 deleted items render exactly once as translucent "ghosts".
 
-- `eclipseview/` — the plug-in (JavaSE-21, singleton bundle `DebugMemoryView`,
+- `EclipseMemoryDiagram/` — the plug-in (JavaSE-21, singleton bundle `DebugMemoryView`,
   root package `com.github.ethangodden.debugmemoryview`). Built manifest-first by
   Tycho against the Eclipse 4.40 / 2026-06 target platform.
-- `eclipseview-tests/` — an `eclipse-test-plugin` **fragment** of the plug-in with JUnit 5
+- `tests/` — an `eclipse-test-plugin` **fragment** of the plug-in with JUnit 5
   suites (`DiffEngineTest`, `HeapLayouterTest`, `ColumnsLayoutTest`); a fragment so the
   tests reach the plug-in's *internal* `model`/`render` packages without exporting them.
   They stay JDK-only, except `ColumnsLayoutTest` which drives bare Draw2d figures (nothing
   paints).
-- `eclipseview.target/` — the Tycho target definition (`eclipseview.target`) pinning the
+- `targetplatform/` — the Tycho target definition (`targetplatform.target`) pinning the
   p2 release train `https://download.eclipse.org/releases/2026-06`.
-- `eclipseview-feature/`, `eclipseview-repository/` — the `eclipse-feature` and the
+- `feature/`, `repository/` — the `eclipse-feature` and the
   `eclipse-repository` p2 update site.
 - `runtime-EclipseApplication/` — the runtime workspace used when launching the
-  plug-in as an Eclipse Application; contains the `FooApp` demo project
-  (`MyApp.java`) to debug against. Its `.metadata` is gitignored.
-- The repo root is a Maven reactor (parent `pom.xml`) and an Eclipse workspace; open it
-  in Eclipse to develop. Note the folder names stay `eclipseview*` while the bundle/
-  project identity is `DebugMemoryView`.
+  plug-in as an Eclipse Application; create a small Java project here to debug
+  against. Its `.metadata` is gitignored.
+- `parent/` — the Maven reactor parent (`pom.xml`), with no source; aggregates all sibling modules via `../` paths.
+- The repo root has no `pom.xml` (it doubles as the Eclipse workspace, kept flat so every
+  module plus `parent/` imports as a non-overlapping project); build with `mvn -f parent`
+  (equivalently `cd parent && mvn`). Open the repo root in Eclipse to develop.
 
 ## Build & test (Maven + Tycho)
 
@@ -36,18 +37,18 @@ Tycho 5.0.3 requires **Java 21** to run (the default `mvn` here is on Java 17), 
 `JAVA_HOME` at the Zulu 21 JDK:
 
 ```sh
-JAVA_HOME=~/Library/Java/JavaVirtualMachines/azul-21.0.11/Contents/Home mvn clean verify
+JAVA_HOME=~/Library/Java/JavaVirtualMachines/azul-21.0.11/Contents/Home mvn -f parent clean verify
 ```
 
 The reactor builds, in order, the target definition, the plug-in (`eclipse-plugin`), the
 JUnit 5 test fragment (`eclipse-test-plugin`, run headless by `tycho-surefire`), the
 feature, and the p2 update site (`eclipse-repository`, emitted to
-`eclipseview-repository/target/repository/`). The first build downloads the target
+`repository/target/repository/`). The first build downloads the target
 platform from download.eclipse.org into `~/.m2`. The old workspace-local
 `.context/compile/compile.sh` is superseded.
 
 In the IDE: run the `DebugMemoryView` plug-in project as an Eclipse Application
-with `runtime-EclipseApplication/` as the runtime workspace, debug `FooApp`, and open the
+with `runtime-EclipseApplication/` as the runtime workspace, debug a small Java program there, and open the
 "Memory Diagram" view (Debug category). `render/DevFixture` provides a hard-coded snapshot
 + diff pair to exercise the renderer without a debugger.
 
@@ -104,4 +105,4 @@ Packages below sit under the root `com.github.ethangodden.debugmemoryview`.
 - Tests mirror the style of the existing JUnit 5 suites: build snapshots with the
   small factory helpers, one `assertEquals`/`assertTrue` (with a message) per
   behavioral claim.
-- After any source change, run `mvn clean verify` (under Java 21) before committing.
+- After any source change, run `mvn -f parent clean verify` (under Java 21) before committing.

@@ -8,10 +8,10 @@
     <groupId>com.github.ethangodden.debugmemoryview</groupId>
     <artifactId>debugmemoryview-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <relativePath>../pom.xml</relativePath>
+    <relativePath>../parent/pom.xml</relativePath>
   </parent>
 
-  <artifactId>DebugMemoryView.tests</artifactId>
+  <artifactId>tests</artifactId>
   <packaging>eclipse-test-plugin</packaging>
 
   <build>

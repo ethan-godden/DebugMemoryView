@@ -8,9 +8,11 @@
     <groupId>com.github.ethangodden.debugmemoryview</groupId>
     <artifactId>debugmemoryview-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <relativePath>../pom.xml</relativePath>
+    <relativePath>../parent/pom.xml</relativePath>
   </parent>
 
-  <artifactId>eclipseview.target</artifactId>
-  <packaging>eclipse-target-definition</packaging>
+  <!-- artifactId MUST equal the Bundle-SymbolicName (manifest-first). Version is
+       taken from META-INF/MANIFEST.MF (1.0.0.qualifier -> 1.0.0-SNAPSHOT). -->
+  <artifactId>DebugMemoryView</artifactId>
+  <packaging>eclipse-plugin</packaging>
 </project>
