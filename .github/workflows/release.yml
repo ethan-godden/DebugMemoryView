@@ -1,0 +1,48 @@
+name: Release
+
+# Cut a GitHub Release from a version tag. Push a tag like v1.0.0 and this builds
+# the plug-in, runs the JUnit suites, and attaches the p2 update-site zip to the
+# Release as a stable, public download (no login / no expiry, unlike CI artifacts).
+# Recipients install it via Help > Install New Software > Add > Archive.
+on:
+  push:
+    tags: [ 'v*' ]
+
+# Only this workflow needs write access (to create the Release); the regular CI
+# build in build.yml stays read-only.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tycho 5.0.3 must itself run on Java 21; this sets JAVA_HOME for the
+      # pre-installed Maven and caches ~/.m2.
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+          cache: maven
+
+      - name: Build + test (Maven + Tycho)
+        run: mvn -f parent clean verify -B
+
+      # Attach the p2 site zip DIRECTLY to the Release (no upload-artifact wrapper),
+      # renamed to the exact file recipients feed to Eclipse. Version comes from the
+      # tag: v1.0.0 -> DebugMemoryView-1.0.0-updatesite.zip.
+      - name: Publish GitHub Release with the update-site zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          src=$(ls repository/target/repository-*.zip | head -n1)
+          asset="DebugMemoryView-${version}-updatesite.zip"
+          cp "$src" "$asset"
+          gh release create "$GITHUB_REF_NAME" "$asset" \
+            --title "DebugMemoryView $GITHUB_REF_NAME" \
+            --generate-notes
