@@ -11,7 +11,7 @@ reference arrows on a Draw2d canvas. Between suspends it diffs consecutive
 snapshots of the same thread and highlights changes (NEW / CHANGED / DELETED);
 deleted items render exactly once as translucent "ghosts".
 
-- `EclipseMemoryDiagram/` — the plug-in (JavaSE-21, singleton bundle `DebugMemoryView`,
+- `plugin/` — the plug-in (JavaSE-21, singleton bundle `DebugMemoryView`,
   root package `com.github.ethangodden.debugmemoryview`). Built manifest-first by
   Tycho against the Eclipse 4.40 / 2026-06 target platform.
 - `tests/` — an `eclipse-test-plugin` **fragment** of the plug-in with JUnit 5
@@ -21,8 +21,11 @@ deleted items render exactly once as translucent "ghosts".
   paints).
 - `targetplatform/` — the Tycho target definition (`targetplatform.target`) pinning the
   p2 release train `https://download.eclipse.org/releases/2026-06`.
-- `feature/`, `repository/` — the `eclipse-feature` and the
-  `eclipse-repository` p2 update site.
+- `feature/`, `repository/` — the `eclipse-feature` and the `eclipse-repository` p2 update
+  site (`category.xml`, emitted to `repository/target/repository/`). This is the primary
+  distribution: CI publishes it to GitHub Pages so it installs into an *existing* Eclipse
+  via Help > Install New Software. (There is intentionally no pre-built product / release —
+  the audience already runs Eclipse.)
 - `runtime-EclipseApplication/` — the runtime workspace used when launching the
   plug-in as an Eclipse Application; create a small Java project here to debug
   against. Its `.metadata` is gitignored.
@@ -46,6 +49,15 @@ feature, and the p2 update site (`eclipse-repository`, emitted to
 `repository/target/repository/`). The first build downloads the target
 platform from download.eclipse.org into `~/.m2`. The old workspace-local
 `.context/compile/compile.sh` is superseded.
+
+CI (`.github/workflows/build.yml`) runs the same `mvn -f parent clean verify` on
+`ubuntu-latest` (JDK 21, cached `~/.m2`) for every push/PR, and on `main` publishes
+`repository/target/repository/` to GitHub Pages. One-time setup: repo Settings > Pages >
+Source = "GitHub Actions". Users then install the plug-in into their own Eclipse via
+Help > Install New Software pointed at `https://ethan-godden.github.io/DebugMemoryView/`.
+The build also archives the site to `repository/target/repository-<version>.zip` (uploaded
+as the `update-site-zip` CI artifact) for an offline install via Install New Software >
+Add > Archive — no hosting required.
 
 In the IDE: run the `DebugMemoryView` plug-in project as an Eclipse Application
 with `runtime-EclipseApplication/` as the runtime workspace, debug a small Java program there, and open the

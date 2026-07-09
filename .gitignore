@@ -7,3 +7,5 @@
 target/
 # PDE compiled output (per-module)
 bin/
+# Tycho-generated consumer POMs (regenerated every build)
+.tycho-consumer-pom.xml

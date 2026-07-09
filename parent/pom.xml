@@ -19,7 +19,7 @@
 
   <modules>
     <module>../targetplatform</module>
-    <module>../EclipseMemoryDiagram</module>
+    <module>../plugin</module>
     <module>../tests</module>
     <module>../feature</module>
     <module>../repository</module>
