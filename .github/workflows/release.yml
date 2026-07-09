@@ -43,6 +43,9 @@ jobs:
           src=$(ls repository/target/repository-*.zip | head -n1)
           asset="DebugMemoryView-${version}-updatesite.zip"
           cp "$src" "$asset"
+          # Re-publish cleanly if this tag was released before (idempotent re-cut).
+          # Removes the Release but leaves the git tag (managed here) intact.
+          gh release delete "$GITHUB_REF_NAME" --yes 2>/dev/null || true
           gh release create "$GITHUB_REF_NAME" "$asset" \
             --title "DebugMemoryView $GITHUB_REF_NAME" \
             --generate-notes
