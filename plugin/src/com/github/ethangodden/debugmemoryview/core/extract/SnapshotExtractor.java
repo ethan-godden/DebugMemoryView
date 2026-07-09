@@ -55,6 +55,13 @@ public final class SnapshotExtractor {
 
     private static final String STRING_SIGNATURE = "Ljava/lang/String;"; //$NON-NLS-1$
 
+    // A String whose backing array is larger than this is NOT pulled over JDWP in
+    // full: getValueString() would transfer and allocate the entire contents on the
+    // debugger before truncation to maxStringLength, so a pathological debuggee String
+    // could stall or OOM the debugger despite the cap. Bounds transient/wire cost the
+    // way maxStringLength bounds the stored text; over-ceiling strings show a marker.
+    private static final int MAX_STRING_TRANSFER_CHARS = 1 << 20; // ~1M
+
     private static final Map<String, String> BOXED_BY_SIGNATURE = Map.of(
             "Ljava/lang/Boolean;", "java.lang.Boolean", //$NON-NLS-1$ //$NON-NLS-2$
             "Ljava/lang/Byte;", "java.lang.Byte", //$NON-NLS-1$ //$NON-NLS-2$
@@ -332,6 +339,9 @@ public final class SnapshotExtractor {
     }
 
     private HeapObjectModel buildString(IJavaObject object, long id) throws DebugException {
+        if (exceedsTransferCeiling(object)) {
+            return HeapObjectModel.string(id, "", true); // too large to pull over the wire //$NON-NLS-1$
+        }
         String text = object.getValueString(); // raw contents of the StringReference
         if (text == null) {
             text = ""; //$NON-NLS-1$
@@ -555,6 +565,9 @@ public final class SnapshotExtractor {
     }
 
     private String quotedString(IJavaObject object) throws DebugException {
+        if (exceedsTransferCeiling(object)) {
+            return "\"...\""; // too large to pull over the wire //$NON-NLS-1$
+        }
         String text = object.getValueString();
         if (text == null) {
             text = ""; //$NON-NLS-1$
@@ -563,6 +576,24 @@ public final class SnapshotExtractor {
             return "\"" + text.substring(0, limits.maxStringLength()) + "...\""; //$NON-NLS-1$ //$NON-NLS-2$
         }
         return "\"" + text + "\""; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * True when the String's backing array is so large that pulling its full contents
+     * over JDWP (getValueString) would risk an allocation/transfer spike on the debugger.
+     * Reads only the backing-array length, never its contents. Best-effort: any probe
+     * failure returns false so the normal full read still runs.
+     */
+    private static boolean exceedsTransferCeiling(IJavaObject stringObject) {
+        try {
+            IJavaFieldVariable valueField = stringObject.getField("value", false); //$NON-NLS-1$
+            if (valueField != null && valueField.getValue() instanceof IJavaArray backing) {
+                return backing.getLength() > MAX_STRING_TRANSFER_CHARS;
+            }
+        } catch (DebugException e) {
+            // best-effort probe: fall back to the normal full read
+        }
+        return false;
     }
 
     private static String boxedText(IJavaObject object) throws DebugException {
