@@ -22,10 +22,11 @@ deleted items render exactly once as translucent "ghosts".
 - `targetplatform/` — the Tycho target definition (`targetplatform.target`) pinning the
   p2 release train `https://download.eclipse.org/releases/2026-06`.
 - `feature/`, `repository/` — the `eclipse-feature` and the `eclipse-repository` p2 update
-  site (`category.xml`, emitted to `repository/target/repository/`). This is the primary
-  distribution: CI publishes it to GitHub Pages so it installs into an *existing* Eclipse
-  via Help > Install New Software. (There is intentionally no pre-built product / release —
-  the audience already runs Eclipse.)
+  site (`category.xml`, emitted to `repository/target/repository/` and archived to
+  `repository/target/repository-<version>.zip`). Distribution is that zip: users install it
+  into an *existing* Eclipse via Help > Install New Software > Add > Archive. (There is
+  intentionally no pre-built product, release, or hosted site — the audience already runs
+  Eclipse.)
 - `runtime-EclipseApplication/` — the runtime workspace used when launching the
   plug-in as an Eclipse Application; create a small Java project here to debug
   against. Its `.metadata` is gitignored.
@@ -51,13 +52,10 @@ platform from download.eclipse.org into `~/.m2`. The old workspace-local
 `.context/compile/compile.sh` is superseded.
 
 CI (`.github/workflows/build.yml`) runs the same `mvn -f parent clean verify` on
-`ubuntu-latest` (JDK 21, cached `~/.m2`) for every push/PR, and on `main` publishes
-`repository/target/repository/` to GitHub Pages. One-time setup: repo Settings > Pages >
-Source = "GitHub Actions". Users then install the plug-in into their own Eclipse via
-Help > Install New Software pointed at `https://ethan-godden.github.io/DebugMemoryView/`.
-The build also archives the site to `repository/target/repository-<version>.zip` (uploaded
-as the `update-site-zip` CI artifact) for an offline install via Install New Software >
-Add > Archive — no hosting required.
+`ubuntu-latest` (JDK 21, cached `~/.m2`) for every push/PR and uploads the archived update
+site (`repository/target/repository-<version>.zip`) as the `update-site-zip` artifact. That
+zip is how the plug-in ships: install it into an existing Eclipse via Help > Install New
+Software > Add > Archive.
 
 In the IDE: run the `DebugMemoryView` plug-in project as an Eclipse Application
 with `runtime-EclipseApplication/` as the runtime workspace, debug a small Java program there, and open the
