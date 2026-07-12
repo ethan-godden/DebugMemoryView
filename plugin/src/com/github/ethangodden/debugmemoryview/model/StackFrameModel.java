@@ -7,7 +7,7 @@ public record StackFrameModel(
         String frameKey,
         String declaringTypeName,
         String methodName,
-        String methodSignature,      // raw JNI signature
+        // raw JNI signature
         String label,                // "TypeSimpleName.methodName() line N", built at extraction
         int lineNumber,              // -1 if unknown
         int depthFromBottom,         // 0 = main/root frame

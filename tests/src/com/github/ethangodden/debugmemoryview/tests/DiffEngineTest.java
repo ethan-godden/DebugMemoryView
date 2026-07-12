@@ -40,7 +40,7 @@ public class DiffEngineTest {
     private static StackFrameModel frame(int depthFromBottom, String method, int line, VariableModel thisVar,
             VariableModel... locals) {
         String key = StackFrameModel.frameKey(depthFromBottom, "Demo", method, "()V");
-        return new StackFrameModel(key, "Demo", method, "()V", "Demo." + method + "() line " + line,
+        return new StackFrameModel(key, "Demo", method, "Demo." + method + "() line " + line,
                 line, depthFromBottom, false, false, thisVar == null, true, thisVar, List.of(locals));
     }
 

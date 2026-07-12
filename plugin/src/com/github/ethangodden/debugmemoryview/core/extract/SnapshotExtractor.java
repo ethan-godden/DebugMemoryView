@@ -169,7 +169,7 @@ public final class SnapshotExtractor {
                 recordError(context + " (" + label + "): " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
-        return new StackFrameModel(frameKey, typeName, methodName, signature, label, lineNumber,
+        return new StackFrameModel(frameKey, typeName, methodName, label, lineNumber,
                 depthFromBottom, true, nativeFrame, staticMethod, false, null, List.of());
     }
 
@@ -201,7 +201,7 @@ public final class SnapshotExtractor {
             }
             locals.add(new VariableModel(name, declaredTypeName(variable), valueOf(variable, 0)));
         }
-        return new StackFrameModel(frameKey, typeName, methodName, signature, label, lineNumber,
+        return new StackFrameModel(frameKey, typeName, methodName, label, lineNumber,
                 depthFromBottom, false, nativeFrame, staticMethod, localsAvailable, thisVariable,
                 List.copyOf(locals));
     }

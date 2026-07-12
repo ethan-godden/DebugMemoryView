@@ -54,7 +54,7 @@ public class HeapLayouterTest {
             locals.add(new VariableModel("v" + i, "T", ref(rootIds[i])));
         }
         return new StackFrameModel(StackFrameModel.frameKey(0, "Demo", "main", "()V"),
-                "Demo", "main", "()V", "Demo.main() line 1", 1, 0,
+                "Demo", "main", "Demo.main() line 1", 1, 0,
                 false, false, true, true, null, locals);
     }
 
