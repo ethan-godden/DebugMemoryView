@@ -41,7 +41,7 @@ public class DiffEngineTest {
             VariableModel... locals) {
         String key = StackFrameModel.frameKey(depthFromBottom, "Demo", method, "()V");
         return new StackFrameModel(key, "Demo", method, "Demo." + method + "() line " + line,
-                line, depthFromBottom, false, false, thisVar == null, true, thisVar, List.of(locals));
+                line, depthFromBottom, false, false, thisVar == null, thisVar, List.of(locals));
     }
 
     private static Map<Long, HeapObjectModel> heap(HeapObjectModel... objects) {

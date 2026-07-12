@@ -55,7 +55,7 @@ public class HeapLayouterTest {
         }
         return new StackFrameModel(StackFrameModel.frameKey(0, "Demo", "main", "()V"),
                 "Demo", "main", "Demo.main() line 1", 1, 0,
-                false, false, true, true, null, locals);
+                false, false, true, null, locals);
     }
 
     private static MemorySnapshot snap(Map<Long, HeapObjectModel> heap, List<StackFrameModel> frames,

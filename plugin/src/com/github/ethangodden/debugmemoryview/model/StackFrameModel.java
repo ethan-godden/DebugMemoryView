@@ -12,7 +12,6 @@ public record StackFrameModel(
         int depthFromBottom,         // 0 = main/root frame
         boolean obsolete,            // invalidated by hot code replace; no variables
         boolean nativeFrame,
-        boolean staticMethod,
         boolean localsAvailable,
         VariableModel thisVariable,  // null for static/native frames
         List<VariableModel> locals) {

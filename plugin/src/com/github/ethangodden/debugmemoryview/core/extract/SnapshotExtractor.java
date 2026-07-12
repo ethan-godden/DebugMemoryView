@@ -170,7 +170,7 @@ public final class SnapshotExtractor {
             }
         }
         return new StackFrameModel(frameKey, typeName, methodName, label, lineNumber,
-                depthFromBottom, true, nativeFrame, staticMethod, false, null, List.of());
+                depthFromBottom, true, nativeFrame, false, null, List.of());
     }
 
     private StackFrameModel completeFrame(IJavaStackFrame frame, String frameKey, String typeName,
@@ -202,7 +202,7 @@ public final class SnapshotExtractor {
             locals.add(new VariableModel(name, declaredTypeName(variable), valueOf(variable, 0)));
         }
         return new StackFrameModel(frameKey, typeName, methodName, label, lineNumber,
-                depthFromBottom, false, nativeFrame, staticMethod, localsAvailable, thisVariable,
+                depthFromBottom, false, nativeFrame, localsAvailable, thisVariable,
                 List.copyOf(locals));
     }
 

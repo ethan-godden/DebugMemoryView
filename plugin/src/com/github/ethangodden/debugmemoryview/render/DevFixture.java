@@ -73,7 +73,7 @@ public final class DevFixture {
 
         String withdrawKey = StackFrameModel.frameKey(2, "bank.Account", "withdraw", "(I)V");
         StackFrameModel withdraw = new StackFrameModel(withdrawKey, "bank.Account", "withdraw",
-                "Account.withdraw(int) line 42", 42, 2, false, false, false, true,
+                "Account.withdraw(int) line 42", 42, 2, false, false, true,
                 thisVar("bank.Account", ACCOUNT),
                 List.of(local("amount", "int", prim("int", "40")),
                         local("owner", "demo.Person", ref(PERSON, "demo.Person")),
@@ -85,13 +85,13 @@ public final class DevFixture {
 
         String payKey = StackFrameModel.frameKey(1, "demo.Person", "pay", "(Lbank/Account;)V");
         StackFrameModel pay = new StackFrameModel(payKey, "demo.Person", "pay",
-                "Person.pay(Account) line 17", 17, 1, false, false, false, true,
+                "Person.pay(Account) line 17", 17, 1, false, false, true,
                 thisVar("demo.Person", PERSON),
                 List.of(local("acct", "bank.Account", ref(ACCOUNT, "bank.Account"))));
 
         String mainKey = StackFrameModel.frameKey(0, "demo.Main", "main", "([Ljava/lang/String;)V");
         StackFrameModel main = new StackFrameModel(mainKey, "demo.Main", "main",
-                "Main.main(String[]) line 9", 9, 0, false, false, true, true, null,
+                "Main.main(String[]) line 9", 9, 0, false, false, true, null,
                 List.of(local("p", "demo.Person", ref(PERSON, "demo.Person")),
                         local("i", "int", prim("int", "3"))));
 
@@ -151,7 +151,7 @@ public final class DevFixture {
                 "bank.Bank.OLD_LIMIT", ChangeStatus.DELETED);
 
         StackFrameModel deletedLogFrame = new StackFrameModel(logKey, "demo.Logger", "log",
-                "Logger.log(String) line 88", 88, 3, false, false, true, true, null,
+                "Logger.log(String) line 88", 88, 3, false, false, true, null,
                 List.of(local("msg", "java.lang.String", ref(NOTE, "java.lang.String"))));
 
         Map<String, List<VariableModel>> deletedVariables = Map.of(
