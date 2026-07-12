@@ -1,5 +1,7 @@
 package com.github.ethangodden.debugmemoryview.render;
 
+import org.apache.commons.lang3.StringUtils;
+
 import com.github.ethangodden.debugmemoryview.model.HeapReference;
 import com.github.ethangodden.debugmemoryview.model.NullValue;
 import com.github.ethangodden.debugmemoryview.model.PrimitiveValue;
@@ -14,17 +16,10 @@ public final class Ellipsis {
     private Ellipsis() {
     }
 
-    /** Hard character cap; applied before any pixel-based clipping. */
-    public static String clipChars(String s, int maxChars) {
-        if (s == null || s.length() <= maxChars) {
-            return s;
-        }
-        return s.substring(0, Math.max(0, maxChars)) + ELLIPSIS;
-    }
-
     /** Display text of a value, char-capped. References render as "#id" (the arrow carries the rest). */
     public static String valueText(ValueModel value, int maxChars) {
-        return clipChars(fullValueText(value), maxChars);
+        // abbreviate's width includes the marker, so maxChars + 1 keeps "maxChars chars + …".
+        return StringUtils.abbreviate(fullValueText(value), ELLIPSIS, maxChars + 1);
     }
 
     /** Untruncated display text of a value (tooltips). */

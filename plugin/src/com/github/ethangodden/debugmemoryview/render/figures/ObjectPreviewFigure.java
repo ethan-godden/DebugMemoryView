@@ -3,6 +3,7 @@ package com.github.ethangodden.debugmemoryview.render.figures;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.LineBorder;
@@ -65,7 +66,7 @@ public class ObjectPreviewFigure extends Figure {
     private static int collectLines(HeapObjectModel model, List<String> lines) {
         return switch (model) {
             case StringObject str -> {
-                lines.add("\"" + Ellipsis.clipChars(str.displayText(), MAX_LINE_CHARS)
+                lines.add("\"" + StringUtils.abbreviate(str.displayText(), Ellipsis.ELLIPSIS, MAX_LINE_CHARS + 1)
                         + (str.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\"");
                 yield 0;
             }

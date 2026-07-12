@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.draw2d.ConnectionLayer;
 import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.FigureCanvas;
@@ -624,8 +625,7 @@ public class DiagramController {
     private static String objectTitle(HeapObjectModel model) {
         if (model instanceof ArrayObject arr) {
             String simple = arr.simpleName() != null ? arr.simpleName() : "?[]";
-            int bracket = simple.indexOf("[]");
-            String base = bracket >= 0 ? simple.substring(0, bracket) : simple;
+            String base = StringUtils.substringBefore(simple, "[]");
             return base + "[" + arr.arrayLength() + "] #" + arr.id();
         }
         return model.simpleName() + " #" + model.id();
@@ -729,7 +729,8 @@ public class DiagramController {
     /** In-box text: primitives verbatim (char-capped), "?" for unreadables, else empty. */
     private String boxTextOf(ValueModel value) {
         if (value instanceof PrimitiveValue primitive) {
-            return Ellipsis.clipChars(primitive.text(), settings.maxValueChars);
+            // abbreviate's width includes the marker, so +1 keeps "maxValueChars chars + …".
+            return StringUtils.abbreviate(primitive.text(), Ellipsis.ELLIPSIS, settings.maxValueChars + 1);
         }
         if (value instanceof UnreadableValue) {
             return "?";
@@ -784,7 +785,7 @@ public class DiagramController {
     }
 
     private Label tooltipLabel(String text) {
-        Label tip = new Label(" " + Ellipsis.clipChars(text, 300) + " ");
+        Label tip = new Label(" " + StringUtils.abbreviate(text, Ellipsis.ELLIPSIS, 300 + 1) + " ");
         tip.setFont(fonts.value());
         return tip;
     }

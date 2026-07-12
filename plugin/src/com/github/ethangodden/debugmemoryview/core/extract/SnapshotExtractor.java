@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.debug.core.DebugException;
@@ -329,9 +330,7 @@ public final class SnapshotExtractor {
             text = ""; //$NON-NLS-1$
         }
         boolean truncated = text.length() > limits.maxStringLength();
-        if (truncated) {
-            text = text.substring(0, limits.maxStringLength());
-        }
+        text = StringUtils.truncate(text, limits.maxStringLength());
         return HeapObjectModel.string(id, text, truncated);
     }
 
@@ -589,7 +588,7 @@ public final class SnapshotExtractor {
     }
 
     static String typeNameFromSignature(String signature) {
-        if (signature == null || signature.isEmpty()) {
+        if (StringUtils.isEmpty(signature)) {
             return "?"; //$NON-NLS-1$
         }
         int dims = 0;
@@ -618,7 +617,7 @@ public final class SnapshotExtractor {
     }
 
     static String simpleName(String typeName) {
-        if (typeName == null || typeName.isEmpty()) {
+        if (StringUtils.isEmpty(typeName)) {
             return "?"; //$NON-NLS-1$
         }
         int lastDot = typeName.lastIndexOf('.');
@@ -627,11 +626,10 @@ public final class SnapshotExtractor {
 
     private static String shortMessage(DebugException e) {
         String message = e.getStatus() != null ? e.getStatus().getMessage() : null;
-        if (message == null || message.isBlank()) {
+        if (StringUtils.isBlank(message)) {
             message = e.getClass().getSimpleName();
         }
-        message = message.trim();
-        return message.length() > 120 ? message.substring(0, 120) : message;
+        return StringUtils.truncate(message.trim(), 120);
     }
 
     private <T> T readOr(DebugRead<T> read, T fallback) {
