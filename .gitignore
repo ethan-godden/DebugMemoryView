@@ -1,13 +1,15 @@
+#MacOS
 .DS_Store
 
-# Eclipse workspace state — local, churns constantly, should not be tracked
-/.metadata/
-# Runtime workspace for the Eclipse Application launch — created on launch, not tracked
-/runtime-EclipseApplication/
-
-# Maven / Tycho build output
+# Maven
 target/
-# PDE compiled output (per-module)
-bin/
-# Tycho-generated consumer POMs (regenerated every build)
 .tycho-consumer-pom.xml
+
+# Eclipse
+/.metadata/
+/runtime-EclipseApplication/
+bin/
+
+#IntelliJ
+.idea
+*.iml
