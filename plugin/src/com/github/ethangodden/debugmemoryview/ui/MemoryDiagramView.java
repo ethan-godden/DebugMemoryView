@@ -46,8 +46,6 @@ import com.github.ethangodden.debugmemoryview.render.DiagramController;
  */
 public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
 
-    public static final String ID = "eclipseview.memoryDiagramView"; //$NON-NLS-1$
-
     private static final String REASON_TERMINATED = "terminated"; //$NON-NLS-1$
 
     private static final int[] HEAP_OBJECT_CHOICES = { 100, 200, 500 };

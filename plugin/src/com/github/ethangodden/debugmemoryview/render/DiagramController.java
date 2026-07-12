@@ -532,7 +532,7 @@ public class DiagramController {
         long id = model.id();
         ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.objectStatusOf(id));
         boolean collapsed = expansion.isObjectCollapsed(id);
-        HeapObjectFigure figure = new HeapObjectFigure(id, objectTitle(model), status, collapsed, palette, fonts,
+        HeapObjectFigure figure = new HeapObjectFigure(objectTitle(model), status, collapsed, palette, fonts,
                 () -> {
                     expansion.setObjectCollapsed(id, !collapsed);
                     rebuild();

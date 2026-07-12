@@ -22,17 +22,11 @@ public class HeapObjectFigure extends ContainerFigure {
     public static final int MIN_WIDTH = 112;
     public static final int MAX_WIDTH = 320;
 
-    private final long id;
     private boolean hoverHighlight;
 
-    public HeapObjectFigure(long id, String title, ChangeStatus status, boolean collapsed,
+    public HeapObjectFigure(String title, ChangeStatus status, boolean collapsed,
             ColorPalette palette, FontKit fonts, Runnable onToggle) {
         super(title, status, !collapsed, palette, fonts, onToggle);
-        this.id = id;
-    }
-
-    public long id() {
-        return id;
     }
 
     /** Tooltip on the header label (STRING boxes: the full quoted content). */

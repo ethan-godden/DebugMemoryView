@@ -1,8 +1,5 @@
 package com.github.ethangodden.debugmemoryview.render;
 
-import org.eclipse.draw2d.TextUtilities;
-import org.eclipse.swt.graphics.Font;
-
 import com.github.ethangodden.debugmemoryview.model.HeapReference;
 import com.github.ethangodden.debugmemoryview.model.NullValue;
 import com.github.ethangodden.debugmemoryview.model.PrimitiveValue;
@@ -23,17 +20,6 @@ public final class Ellipsis {
             return s;
         }
         return s.substring(0, Math.max(0, maxChars)) + ELLIPSIS;
-    }
-
-    /** Pixel-based clip via TextUtilities; used where Draw2d Labels cannot self-truncate. */
-    public static String clip(String s, Font font, int availableWidth) {
-        if (s == null || TextUtilities.INSTANCE.getStringExtents(s, font).width <= availableWidth) {
-            return s;
-        }
-        int ellipsisWidth = TextUtilities.INSTANCE.getStringExtents(ELLIPSIS, font).width;
-        int chars = TextUtilities.INSTANCE.getLargestSubstringConfinedTo(s, font,
-                Math.max(0, availableWidth - ellipsisWidth));
-        return s.substring(0, chars) + ELLIPSIS;
     }
 
     /** Display text of a value, char-capped. References render as "#id" (the arrow carries the rest). */

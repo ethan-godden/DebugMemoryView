@@ -14,16 +14,8 @@ public record MemorySnapshot(
         String threadKey,
         String threadName,
         long sequence,               // pipeline request sequence that produced it
-        long timestampMillis,
         List<StackFrameModel> frames,     // index 0 = top of stack
         int framesOmitted,
         Map<Long, HeapObjectModel> heap,  // unmodifiable LinkedHashMap; BFS order
-        List<StaticsClassModel> statics,  // stack order, deduped
-        String selectedFrameKey,          // frame selected in the Debug view (nullable)
-        ExtractionStats stats) {
-
-    public MemorySnapshot withSelectedFrame(String frameKey) {
-        return new MemorySnapshot(debugTargetKey, threadKey, threadName, sequence, timestampMillis,
-                frames, framesOmitted, heap, statics, frameKey, stats);
-    }
+        List<StaticsClassModel> statics) {  // stack order, deduped
 }

@@ -74,10 +74,6 @@ public final class ColorPalette {
         columnBg = color(background);
     }
 
-    public boolean isDark() {
-        return dark;
-    }
-
     /** False when the view toggle or the workspace preference disables change coloring. */
     public boolean isHighlighting() {
         return highlighting;

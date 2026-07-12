@@ -59,8 +59,7 @@ Software > Add > Archive.
 
 In the IDE: run the `DebugMemoryView` plug-in project as an Eclipse Application
 with `runtime-EclipseApplication/` as the runtime workspace, debug a small Java program there, and open the
-"Memory Diagram" view (Debug category). `render/DevFixture` provides a hard-coded snapshot
-+ diff pair to exercise the renderer without a debugger.
+"Memory Diagram" view (Debug category).
 
 ## Architecture
 

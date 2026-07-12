@@ -11,17 +11,16 @@ public record ExtractionLimits(
         int maxStringLength,
         boolean inlineStrings,       // escape hatch: render strings inline instead of heap boxes
         boolean inlineBoxed,         // escape hatch: render boxed primitives inline
-        boolean includeSyntheticFields, // this$0, $assertionsDisabled, lambda captures
-        int maxErrors) {             // recorded per snapshot
+        boolean includeSyntheticFields) { // this$0, $assertionsDisabled, lambda captures
 
     public static ExtractionLimits defaults() {
-        return new ExtractionLimits(32, 200, 8, 32, 100, 24, 200, false, false, false, 20);
+        return new ExtractionLimits(32, 200, 8, 32, 100, 24, 200, false, false, false);
     }
 
     /** Copy with a different explored-heap-object cap (the only per-view override). */
     public ExtractionLimits withMaxObjects(int newMaxObjects) {
         return new ExtractionLimits(maxFrames, newMaxObjects, maxDepth, maxFieldsPerObject,
                 maxArrayElements, maxStaticFieldsPerClass, maxStringLength,
-                inlineStrings, inlineBoxed, includeSyntheticFields, maxErrors);
+                inlineStrings, inlineBoxed, includeSyntheticFields);
     }
 }

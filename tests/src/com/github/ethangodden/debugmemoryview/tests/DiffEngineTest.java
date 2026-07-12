@@ -9,7 +9,6 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import com.github.ethangodden.debugmemoryview.model.ExtractionStats;
 import com.github.ethangodden.debugmemoryview.model.FieldModel;
 import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
 import com.github.ethangodden.debugmemoryview.model.HeapReference;
@@ -40,7 +39,7 @@ public class DiffEngineTest {
     private static StackFrameModel frame(int depthFromBottom, String method, int line, VariableModel thisVar,
             VariableModel... locals) {
         String key = StackFrameModel.frameKey(depthFromBottom, "Demo", method, "()V");
-        return new StackFrameModel(key, "Demo", method, "Demo." + method + "() line " + line,
+        return new StackFrameModel(key, "Demo." + method + "() line " + line,
                 line, depthFromBottom, false, false, thisVar == null, thisVar, List.of(locals));
     }
 
@@ -54,13 +53,12 @@ public class DiffEngineTest {
 
     private static MemorySnapshot snap(long seq, List<StackFrameModel> frames,
             Map<Long, HeapObjectModel> heap, List<StaticsClassModel> statics) {
-        return new MemorySnapshot("target", "thread-1", "main", seq, 0L, frames, 0, heap, statics,
-                null, ExtractionStats.empty());
+        return new MemorySnapshot("target", "thread-1", "main", seq, frames, 0, heap, statics);
     }
 
     private static MemorySnapshot snapOnThread(String threadKey, long seq, List<StackFrameModel> frames) {
-        return new MemorySnapshot("target", threadKey, threadKey, seq, 0L, frames, 0,
-                Map.of(), List.of(), null, ExtractionStats.empty());
+        return new MemorySnapshot("target", threadKey, threadKey, seq, frames, 0,
+                Map.of(), List.of());
     }
 
     private static FieldModel field(String declaring, String name, ValueModel v) {

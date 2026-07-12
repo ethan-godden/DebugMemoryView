@@ -26,7 +26,6 @@ import org.eclipse.jdt.debug.core.IJavaValue;
 import org.eclipse.jdt.debug.core.IJavaVariable;
 
 import com.github.ethangodden.debugmemoryview.core.ExtractionLimits;
-import com.github.ethangodden.debugmemoryview.model.ExtractionStats;
 import com.github.ethangodden.debugmemoryview.model.FieldModel;
 import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
 import com.github.ethangodden.debugmemoryview.model.HeapReference;
@@ -92,12 +91,7 @@ public final class SnapshotExtractor {
     private final LinkedHashMap<Long, HeapObjectModel> heap = new LinkedHashMap<>();
     private final ArrayDeque<Pending> queue = new ArrayDeque<>();
     private final LinkedHashMap<String, IJavaReferenceType> staticsTypes = new LinkedHashMap<>();
-    private final List<String> errors = new ArrayList<>();
     private int admitted;       // enqueued for exploration; counts toward maxObjects
-    private int explored;       // successfully built nodes
-    private int objectsOmitted; // enqueues refused by the caps
-    private boolean heapTruncated;
-    private boolean partial;
 
     public SnapshotExtractor(ExtractionLimits limits, IProgressMonitor monitor, long sequence) {
         this.limits = limits;
@@ -105,7 +99,7 @@ public final class SnapshotExtractor {
         this.sequence = sequence;
     }
 
-    public MemorySnapshot extract(IJavaThread javaThread, IJavaStackFrame selectedFrameOrNull,
+    public MemorySnapshot extract(IJavaThread javaThread,
             String debugTargetKey, String threadKey) throws DebugException {
         this.thread = javaThread;
         this.target = javaThread.getDebugTarget();
@@ -123,58 +117,50 @@ public final class SnapshotExtractor {
         int taken = Math.min(raw.length, limits.maxFrames());
         int framesOmitted = raw.length - taken;
         List<StackFrameModel> frames = new ArrayList<>(taken);
-        String selectedFrameKey = null;
         for (int i = 0; i < taken; i++) {
             checkCanceled();
             IJavaStackFrame frame = (IJavaStackFrame) raw[i];
-            StackFrameModel model = extractFrame(frame, raw.length - 1 - i);
-            frames.add(model);
-            if (selectedFrameOrNull != null && frame.equals(selectedFrameOrNull)) {
-                selectedFrameKey = model.frameKey();
-            }
+            frames.add(extractFrame(frame, raw.length - 1 - i));
         }
 
         // Statics are BFS roots too (depth 0); seed them before draining the queue.
         List<StaticsClassModel> statics = extractStatics();
         drainHeapQueue();
 
-        ExtractionStats stats = new ExtractionStats(explored, objectsOmitted, heapTruncated, partial,
-                List.copyOf(errors));
         return new MemorySnapshot(debugTargetKey, threadKey, threadName, sequence,
-                System.currentTimeMillis(), List.copyOf(frames), framesOmitted,
-                Collections.unmodifiableMap(heap), statics, selectedFrameKey, stats);
+                List.copyOf(frames), framesOmitted,
+                Collections.unmodifiableMap(heap), statics);
     }
 
     // ---- stack -----------------------------------------------------------
 
     private StackFrameModel extractFrame(IJavaStackFrame frame, int depthFromBottom) {
-        String context = "frame " + depthFromBottom; //$NON-NLS-1$
-        boolean obsolete = readOr(frame::isObsolete, Boolean.TRUE, context).booleanValue();
-        String typeName = readOr(frame::getDeclaringTypeName, "<unknown>", context); //$NON-NLS-1$
-        String methodName = readOr(frame::getMethodName, "<unknown>", context); //$NON-NLS-1$
-        String signature = readOr(frame::getSignature, "", context); //$NON-NLS-1$
-        int lineNumber = readOr(frame::getLineNumber, Integer.valueOf(-1), context).intValue();
-        boolean nativeFrame = readOr(frame::isNative, Boolean.FALSE, context).booleanValue();
-        boolean staticMethod = readOr(frame::isStatic, Boolean.FALSE, context).booleanValue();
+        boolean obsolete = readOr(frame::isObsolete, Boolean.TRUE).booleanValue();
+        String typeName = readOr(frame::getDeclaringTypeName, "<unknown>"); //$NON-NLS-1$
+        String methodName = readOr(frame::getMethodName, "<unknown>"); //$NON-NLS-1$
+        String signature = readOr(frame::getSignature, ""); //$NON-NLS-1$
+        int lineNumber = readOr(frame::getLineNumber, Integer.valueOf(-1)).intValue();
+        boolean nativeFrame = readOr(frame::isNative, Boolean.FALSE).booleanValue();
+        boolean staticMethod = readOr(frame::isStatic, Boolean.FALSE).booleanValue();
         String frameKey = StackFrameModel.frameKey(depthFromBottom, typeName, methodName, signature);
         String label = buildLabel(typeName, methodName, lineNumber);
 
         if (!obsolete) {
             registerStaticsType(frame);
             try {
-                return completeFrame(frame, frameKey, typeName, methodName, signature, label,
+                return completeFrame(frame, frameKey, typeName, label,
                         lineNumber, depthFromBottom, nativeFrame, staticMethod);
             } catch (DebugException e) {
                 // Per-frame degradation (incl. ERR_INVALID_STACK_FRAME): placeholder, snapshot survives.
-                recordError(context + " (" + label + "): " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
+                abortIfUnusable();
             }
         }
-        return new StackFrameModel(frameKey, typeName, methodName, label, lineNumber,
+        return new StackFrameModel(frameKey, label, lineNumber,
                 depthFromBottom, true, nativeFrame, false, null, List.of());
     }
 
     private StackFrameModel completeFrame(IJavaStackFrame frame, String frameKey, String typeName,
-            String methodName, String signature, String label, int lineNumber, int depthFromBottom,
+            String label, int lineNumber, int depthFromBottom,
             boolean nativeFrame, boolean staticMethod) throws DebugException {
 
         VariableModel thisVariable = null;
@@ -185,7 +171,7 @@ public final class SnapshotExtractor {
             }
         } catch (DebugException e) {
             String message = shortMessage(e);
-            recordError("this of " + label + ": " + message); //$NON-NLS-1$ //$NON-NLS-2$
+            abortIfUnusable();
             if (!staticMethod && !nativeFrame) {
                 thisVariable = new VariableModel("this", typeName, new UnreadableValue(message)); //$NON-NLS-1$
             }
@@ -195,13 +181,13 @@ public final class SnapshotExtractor {
         boolean localsAvailable = frame.wereLocalsAvailable(); // valid only after the retrieval above
         List<VariableModel> locals = new ArrayList<>(rawLocals.length);
         for (IJavaVariable variable : rawLocals) {
-            String name = readOr(variable::getName, null, "local of " + label); //$NON-NLS-1$
+            String name = readOr(variable::getName, null);
             if (name == null) {
                 continue;
             }
             locals.add(new VariableModel(name, declaredTypeName(variable), valueOf(variable, 0)));
         }
-        return new StackFrameModel(frameKey, typeName, methodName, label, lineNumber,
+        return new StackFrameModel(frameKey, label, lineNumber,
                 depthFromBottom, false, nativeFrame, localsAvailable, thisVariable,
                 List.copyOf(locals));
     }
@@ -244,7 +230,7 @@ public final class SnapshotExtractor {
             return new PrimitiveValue("?", value.getValueString()); // JDI void and friends //$NON-NLS-1$
         } catch (DebugException e) {
             String message = shortMessage(e);
-            recordError("value: " + message); //$NON-NLS-1$
+            abortIfUnusable();
             return new UnreadableValue(message);
         }
     }
@@ -253,7 +239,7 @@ public final class SnapshotExtractor {
         long id = object.getUniqueId();
         if (id == -1) {
             // Collected between value fetch and id fetch: no node.
-            recordError("value: object collected"); //$NON-NLS-1$
+            abortIfUnusable();
             return new UnreadableValue("<collected>"); //$NON-NLS-1$
         }
         HeapObjectModel existing = heap.get(id);
@@ -265,9 +251,6 @@ public final class SnapshotExtractor {
             if (depth < limits.maxDepth() && admitted < limits.maxObjects()) {
                 admitted++;
                 queue.add(new Pending(object, id, depth, typeName));
-            } else {
-                heapTruncated = true;
-                objectsOmitted++;
             }
         }
         return new HeapReference(id, typeName);
@@ -282,7 +265,6 @@ public final class SnapshotExtractor {
             HeapObjectModel node = buildNode(pending);
             if (node != null) {
                 heap.put(pending.id(), node); // replaces the stub in place, keeps BFS order
-                explored++;
             }
         }
     }
@@ -304,7 +286,7 @@ public final class SnapshotExtractor {
             return buildPlainOrEnum(pending, simple);
         } catch (DebugException e) {
             // Per-object degradation: the stub stays, so inbound arrows remain valid.
-            recordError("object " + simple + "#" + pending.id() + ": " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            abortIfUnusable();
             return null;
         }
     }
@@ -328,7 +310,7 @@ public final class SnapshotExtractor {
                     element = convert(array.getValue(i), pending.depth() + 1);
                 } catch (DebugException e) {
                     String message = shortMessage(e);
-                    recordError("element " + i + " of " + simple + ": " + message); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    abortIfUnusable();
                     element = new UnreadableValue(message);
                 }
                 elements.add(element);
@@ -385,7 +367,7 @@ public final class SnapshotExtractor {
         try {
             isEnum = object.getJavaType() instanceof IJavaClassType classType && classType.isEnum();
         } catch (DebugException e) {
-            recordError("type of " + simple + ": " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
+            abortIfUnusable();
         }
 
         IVariable[] variables = object.getVariables(); // allFields(): instance+static+inherited, JDT-sorted
@@ -402,7 +384,7 @@ public final class SnapshotExtractor {
                 isStatic = variable.isStatic();
                 isSynthetic = variable.isSynthetic();
             } catch (DebugException e) {
-                recordError("field of " + simple + ": " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
+                abortIfUnusable();
                 continue;
             }
             if (isStatic) {
@@ -411,14 +393,13 @@ public final class SnapshotExtractor {
             if (isSynthetic && !limits.includeSyntheticFields()) {
                 continue;
             }
-            String name = readOr(variable::getName, null, "field of " + simple); //$NON-NLS-1$
+            String name = readOr(variable::getName, null);
             if (name == null) {
                 continue;
             }
             if (isEnum && enumConstantName == null && "name".equals(name) && isEnumBaseField(variable)) { //$NON-NLS-1$
                 // Inherited private java.lang.Enum.name — only visible via allFields().
-                enumConstantName = readOr(() -> variable.getValue().getValueString(), null,
-                        "enum name of " + simple); //$NON-NLS-1$
+                enumConstantName = readOr(() -> variable.getValue().getValueString(), null);
             }
             if (fields.size() >= limits.maxFieldsPerObject()) {
                 omitted++;
@@ -451,7 +432,7 @@ public final class SnapshotExtractor {
         if (variable instanceof IJavaFieldVariable field) {
             IJavaType declaring = field.getDeclaringType(); // local getter, no wire call
             if (declaring != null) {
-                declaringTypeName = readOr(declaring::getName, "?", "declaring type of " + name); //$NON-NLS-1$ //$NON-NLS-2$
+                declaringTypeName = readOr(declaring::getName, "?"); //$NON-NLS-1$
             }
         }
         return new FieldModel(name, declaringTypeName, declaredTypeName(variable),
@@ -467,7 +448,7 @@ public final class SnapshotExtractor {
                 staticsTypes.putIfAbsent(type.getName(), type); // first appearance = top frame first
             }
         } catch (DebugException e) {
-            recordError("declaring type: " + shortMessage(e)); //$NON-NLS-1$
+            abortIfUnusable();
         }
     }
 
@@ -487,7 +468,7 @@ public final class SnapshotExtractor {
                     try {
                         field = type.getField(name);
                     } catch (DebugException e) {
-                        recordError("static " + className + "." + name + ": " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                        abortIfUnusable();
                         continue;
                     }
                     if (field == null) {
@@ -499,7 +480,7 @@ public final class SnapshotExtractor {
                         isStatic = field.isStatic();
                         isSynthetic = field.isSynthetic();
                     } catch (DebugException e) {
-                        recordError("static " + className + "." + name + ": " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                        abortIfUnusable();
                         continue;
                     }
                     if (!isStatic || (isSynthetic && !limits.includeSyntheticFields())) {
@@ -514,7 +495,7 @@ public final class SnapshotExtractor {
                             valueOf(field, 0)));
                 }
             } catch (DebugException e) {
-                recordError("statics of " + className + ": " + shortMessage(e)); //$NON-NLS-1$ //$NON-NLS-2$
+                abortIfUnusable();
             }
             if (!fields.isEmpty()) {
                 statics.add(new StaticsClassModel(className, simpleName(className),
@@ -531,7 +512,7 @@ public final class SnapshotExtractor {
             return convert((IJavaValue) variable.getValue(), depth);
         } catch (DebugException e) {
             String message = shortMessage(e);
-            recordError("value of " + safeName(variable) + ": " + message); //$NON-NLS-1$ //$NON-NLS-2$
+            abortIfUnusable();
             return new UnreadableValue(message);
         }
     }
@@ -644,14 +625,6 @@ public final class SnapshotExtractor {
         return lastDot < 0 ? typeName : typeName.substring(lastDot + 1);
     }
 
-    private static String safeName(IJavaVariable variable) {
-        try {
-            return variable.getName();
-        } catch (DebugException e) {
-            return "?"; //$NON-NLS-1$
-        }
-    }
-
     private static String shortMessage(DebugException e) {
         String message = e.getStatus() != null ? e.getStatus().getMessage() : null;
         if (message == null || message.isBlank()) {
@@ -661,25 +634,20 @@ public final class SnapshotExtractor {
         return message.length() > 120 ? message.substring(0, 120) : message;
     }
 
-    private <T> T readOr(DebugRead<T> read, T fallback, String context) {
+    private <T> T readOr(DebugRead<T> read, T fallback) {
         try {
             return read.read();
         } catch (DebugException e) {
-            recordError(context + ": " + shortMessage(e)); //$NON-NLS-1$
+            abortIfUnusable();
             return fallback;
         }
     }
 
-    private void recordError(String message) {
-        partial = true;
-        if (errors.size() < limits.maxErrors()) {
-            errors.add(message);
-        }
-        // A doomed walk (thread resumed, VM gone) fails on every read; abort fast
-        // instead of grinding through the caps. These probes are local state checks.
-        abortIfUnusable();
-    }
-
+    /**
+     * Bail out of a doomed walk. Called from every read's catch block: a walk whose
+     * thread resumed or whose VM went away fails on every read, so abort fast instead
+     * of grinding through the caps. These probes are local state checks (no wire calls).
+     */
     private void abortIfUnusable() {
         if (target == null || target.isTerminated() || target.isDisconnected()
                 || !thread.isSuspended()) {

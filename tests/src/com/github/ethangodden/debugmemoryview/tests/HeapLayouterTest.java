@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.github.ethangodden.debugmemoryview.model.ExtractionStats;
 import com.github.ethangodden.debugmemoryview.model.FieldModel;
 import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
 import com.github.ethangodden.debugmemoryview.model.HeapReference;
@@ -54,14 +53,13 @@ public class HeapLayouterTest {
             locals.add(new VariableModel("v" + i, "T", ref(rootIds[i])));
         }
         return new StackFrameModel(StackFrameModel.frameKey(0, "Demo", "main", "()V"),
-                "Demo", "main", "Demo.main() line 1", 1, 0,
+                "Demo.main() line 1", 1, 0,
                 false, false, true, null, locals);
     }
 
     private static MemorySnapshot snap(Map<Long, HeapObjectModel> heap, List<StackFrameModel> frames,
             List<StaticsClassModel> statics) {
-        return new MemorySnapshot("target", "thread-1", "main", 1L, 0L, frames, 0, heap, statics,
-                null, ExtractionStats.empty());
+        return new MemorySnapshot("target", "thread-1", "main", 1L, frames, 0, heap, statics);
     }
 
     private static List<Long> longs(long... expected) {

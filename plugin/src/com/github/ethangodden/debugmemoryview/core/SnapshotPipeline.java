@@ -18,7 +18,6 @@ import org.eclipse.debug.core.DebugException;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.model.IDebugTarget;
-import org.eclipse.debug.core.model.IStackFrame;
 import org.eclipse.jdt.debug.core.IJavaStackFrame;
 import org.eclipse.jdt.debug.core.IJavaThread;
 import org.eclipse.swt.widgets.Display;
@@ -27,7 +26,6 @@ import org.eclipse.ui.PlatformUI;
 import com.github.ethangodden.debugmemoryview.Activator;
 import com.github.ethangodden.debugmemoryview.core.extract.SnapshotExtractor;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
-import com.github.ethangodden.debugmemoryview.model.StackFrameModel;
 import com.github.ethangodden.debugmemoryview.model.diff.DiffEngine;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 
@@ -50,7 +48,7 @@ public final class SnapshotPipeline {
 
     private static final long DEBOUNCE_MS = 150;
 
-    private record Request(long seq, IJavaThread thread, IJavaStackFrame frame) {
+    private record Request(long seq, IJavaThread thread) {
     }
 
     /** One thread's cached suspend state, keyed by threadKey; the three parts always move together. */
@@ -72,8 +70,8 @@ public final class SnapshotPipeline {
     private final ConcurrentHashMap<IDebugTarget, String> targetKeys = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<IJavaThread, String> threadKeys = new ConcurrentHashMap<>();
     // Suspend generation per threadKey: bumped on RESUME. A trigger whose thread's
-    // generation still matches the stored baseline is a same-suspend frame
-    // reselection and takes the fast path (no JDI traffic beyond the frame lookup).
+    // generation still matches the stored baseline is a same-suspend re-trigger
+    // and takes the fast path (republish the cache, no JDI traffic).
     private final ConcurrentHashMap<String, Long> suspendGenerations = new ConcurrentHashMap<>();
     // Baseline removals requested from the event thread, executed on the Job thread.
     private final ConcurrentLinkedQueue<String> pendingBaselineCleanups = new ConcurrentLinkedQueue<>();
@@ -84,12 +82,12 @@ public final class SnapshotPipeline {
 
     // ---- triggers (UI thread / debug event dispatch thread; no JDI wire calls) ----
 
-    public void trigger(IJavaThread thread, IJavaStackFrame frameOrNull) {
+    public void trigger(IJavaThread thread) {
         if (thread == null) {
             return;
         }
         synchronized (requestLock) {
-            current = new Request(seq.incrementAndGet(), thread, frameOrNull);
+            current = new Request(seq.incrementAndGet(), thread);
         }
         job.cancel(); // flags a running extraction's monitor; no-op when idle
         job.schedule(DEBOUNCE_MS); // re-arms the fuse: bursts collapse to one extraction
@@ -97,7 +95,7 @@ public final class SnapshotPipeline {
 
     /** Raw SUSPEND event; matters when the Debug view is closed. Debounce dedupes vs the context event. */
     public void suspendFallback(IJavaThread thread) {
-        trigger(thread, null);
+        trigger(thread);
     }
 
     // Under the request lock: if the live request matches, mark it superseded (a seq
@@ -246,22 +244,17 @@ public final class SnapshotPipeline {
                 String targetKey = targetKeyOf(target);
                 String threadKey = threadKeyOf(targetKey, thread);
                 long generation = suspendGenerations.getOrDefault(threadKey, Long.valueOf(0)).longValue();
-                IJavaStackFrame selected = req.frame() != null ? req.frame()
-                        : (IJavaStackFrame) thread.getTopStackFrame();
-
-                // Same-suspend fast path: a pure frame reselection republishes the
-                // cached snapshot + diff instead of re-extracting (which would also
+                // Same-suspend fast path: a re-trigger within one suspend republishes
+                // the cached snapshot + diff instead of re-extracting (which would also
                 // wrongly wipe the change highlighting by re-baselining).
                 Baseline baseline = baselines.get(threadKey);
                 if (baseline != null && baseline.generation() == generation) {
-                    MemorySnapshot snap = baseline.snapshot().withSelectedFrame(frameKeyOf(thread, selected));
-                    baselines.put(threadKey, new Baseline(snap, baseline.diff(), generation));
-                    publish(req.seq(), snap, baseline.diff());
+                    publish(req.seq(), baseline.snapshot(), baseline.diff());
                     return Status.OK_STATUS;
                 }
 
                 MemorySnapshot snapshot = new SnapshotExtractor(limits, monitor, req.seq())
-                        .extract(thread, selected, targetKey, threadKey);
+                        .extract(thread, targetKey, threadKey);
                 if (req.seq() != seq.get() || monitor.isCanceled()) {
                     return Status.CANCEL_STATUS; // superseded during the run; never store or show
                 }
@@ -298,29 +291,6 @@ public final class SnapshotPipeline {
             String prefix = key + "/"; //$NON-NLS-1$
             baselines.keySet().removeIf(k -> k.startsWith(prefix));
         }
-    }
-
-    /**
-     * Locates the selected frame in the thread's (JDT-cached while suspended)
-     * frame list and rebuilds its key. Any failure degrades to "no selection".
-     */
-    private static String frameKeyOf(IJavaThread thread, IJavaStackFrame selected) {
-        if (selected == null) {
-            return null;
-        }
-        try {
-            IStackFrame[] frames = thread.getStackFrames();
-            for (int i = 0; i < frames.length; i++) {
-                if (frames[i].equals(selected)) {
-                    return StackFrameModel.frameKey(frames.length - 1 - i,
-                            selected.getDeclaringTypeName(), selected.getMethodName(),
-                            selected.getSignature());
-                }
-            }
-        } catch (DebugException e) {
-            // publish without a selection rather than re-extract
-        }
-        return null;
     }
 
     private static boolean isStaleContext(IJavaThread thread, DebugException e) {
@@ -380,7 +350,6 @@ public final class SnapshotPipeline {
                 return; // superseded while queued
             }
             lastPublishedTargetKey = snapshot.debugTargetKey();
-            snapshot.threadKey();
             for (ISnapshotConsumer consumer : consumers) {
                 consumer.snapshotReady(snapshot, diff);
             }

@@ -14,10 +14,8 @@ import com.github.ethangodden.debugmemoryview.render.FontKit;
 public class ColumnFigure extends Figure {
 
     private final Label header;
-    private final ScrollPane scrollPane;
 
     public ColumnFigure(String title, ScrollPane pane, ColorPalette palette, FontKit fonts) {
-        this.scrollPane = pane;
         setLayoutManager(new BorderLayout());
         setOpaque(true);
         header = new Label(title);
@@ -31,10 +29,6 @@ public class ColumnFigure extends Figure {
 
     public Label header() {
         return header;
-    }
-
-    public ScrollPane scrollPane() {
-        return scrollPane;
     }
 
     /** Chrome persists across rebuilds; re-apply theme colors on every render. */

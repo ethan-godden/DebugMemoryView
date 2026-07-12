@@ -92,23 +92,22 @@ public final class DebugContextTracker implements IDebugContextListener, IDebugE
             return true;
         }
         if (element instanceof IJavaStackFrame frame) {
-            p.trigger((IJavaThread) frame.getThread(), frame);
+            p.trigger((IJavaThread) frame.getThread());
             return true;
         }
         if (element instanceof IJavaThread thread) {
-            // Top frame is resolved inside the Job: getTopStackFrame() blocks on the wire.
-            p.trigger(thread, null);
+            p.trigger(thread);
             return true;
         }
         if (element instanceof IAdaptable adaptable) {
             IJavaStackFrame frame = adaptable.getAdapter(IJavaStackFrame.class);
             if (frame != null) {
-                p.trigger((IJavaThread) frame.getThread(), frame);
+                p.trigger((IJavaThread) frame.getThread());
                 return true;
             }
             IJavaThread thread = adaptable.getAdapter(IJavaThread.class);
             if (thread != null) {
-                p.trigger(thread, null);
+                p.trigger(thread);
                 return true;
             }
         }
