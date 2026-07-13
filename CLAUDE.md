@@ -30,6 +30,11 @@ deleted items render exactly once as translucent "ghosts".
 - `runtime-EclipseApplication/` — the runtime workspace used when launching the
   plug-in as an Eclipse Application; create a small Java project here to debug
   against. The directory itself is gitignored — Eclipse recreates it on first launch.
+- `samples/` — a plain Eclipse Java project (`MemoryDiagramSamples`, JavaSE-21) of
+  small programs to debug against the Memory Diagram view. **Not** a Maven module and
+  **not** in the reactor — it's tracked in git but never built by `mvn -f parent`.
+  Import it once (in place) into the runtime workspace; the import persists across
+  launches (`clearws=false`). See `samples/README.md`.
 - `parent/` — the Maven reactor parent (`pom.xml`), with no source; aggregates all sibling modules via `../` paths.
 - The repo root has no `pom.xml` (it doubles as the Eclipse workspace, kept flat so every
   module plus `parent/` imports as a non-overlapping project); build with `mvn -f parent`

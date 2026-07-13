@@ -121,8 +121,12 @@ pull request and uploads the update-site zip as a build artifact.
    Application*). It starts a runtime Eclipse using a `runtime-EclipseApplication/` workspace —
    created in the repo root on first launch and gitignored. (The launch targets the EPP *RCP and RAP
    Developers* product; adjust the launch's product if your host Eclipse doesn't provide it.)
-3. In the runtime Eclipse, create a small Java project, set a breakpoint, debug it, and open the
-   **Memory Diagram** view.
+3. In the runtime Eclipse, either create a small Java project or — for a ready-made set of programs
+   that exercise every feature — do a one-time **File ▸ Import ▸ Existing Projects into Workspace**
+   of the repo's `samples/` folder (leave *Copy projects into workspace* unchecked). Because the
+   launch uses `clearws=false`, that import persists across later launches. Set a breakpoint (each
+   sample's Javadoc names a good spot), debug it, and open the **Memory Diagram** view. See
+   `samples/README.md`.
 
 For renderer work without a live debugger, `render/DevFixture` provides a hard-coded snapshot + diff
 pair (call `controller.setSnapshot(DevFixture.snapshot(), DevFixture.diff())` from a scratch action).
@@ -137,6 +141,7 @@ pair (call `controller.setSnapshot(DevFixture.snapshot(), DevFixture.diff())` fr
 | `repository/` | The p2 update site (`category.xml`); produces the shipped zip. |
 | `targetplatform/` | The Tycho target definition pinning the Eclipse 2026-06 release train. |
 | `parent/` | The Maven reactor parent (aggregates the modules; build entry point). |
+| `samples/` | Plain Eclipse Java project of demo programs to debug against the view (not a Maven module; import in place into the runtime workspace). |
 
 Releases are cut by pushing a version tag: `git tag v1.0.0 && git push origin v1.0.0` triggers
 `.github/workflows/release.yml`, which builds, tests, and publishes the update-site zip as a GitHub
