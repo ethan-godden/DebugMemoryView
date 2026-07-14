@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.draw2d.ConnectionLayer;
@@ -482,14 +483,11 @@ public class DiagramController {
 
         // Heap cap chosen in extraction BFS order (heap map order): roots-first survival.
         int heapCap = expansion.capOf(CAP_KEY_HEAP, settings.maxHeapObjectsRendered);
-        Set<Long> rendered = new HashSet<>();
-        for (Long id : snapshot.heap().keySet()) {
-            if (rendered.size() >= heapCap) {
-                break;
-            }
-            rendered.add(id);
-        }
-        int omitted = snapshot.heap().size() - rendered.size();
+        int shown = Math.min(snapshot.heap().size(), heapCap);
+        Set<Long> rendered = snapshot.heap().keySet().stream()
+                .limit(shown)
+                .collect(Collectors.toCollection(HashSet::new));
+        int omitted = snapshot.heap().size() - shown;
         Set<Long> ghostIds = new HashSet<>();
         for (HeapObjectModel ghost : ghosts) {
             ghostIds.add(Long.valueOf(ghost.id()));

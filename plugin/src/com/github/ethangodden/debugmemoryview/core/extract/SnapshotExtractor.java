@@ -320,23 +320,32 @@ public final class SnapshotExtractor {
     }
 
     private HeapObjectModel buildString(IJavaObject object, long id) throws DebugException {
-        if (exceedsTransferCeiling(object)) {
+        CappedText capped = readCappedString(object);
+        if (capped == null) {
             return HeapObjectModel.string(id, "", true); // too large to pull over the wire //$NON-NLS-1$
+        }
+        return HeapObjectModel.string(id, capped.text(), capped.truncated());
+    }
+
+    /** Capped raw contents of a String plus whether the cap bit, or null if too large to pull over the wire. */
+    private CappedText readCappedString(IJavaObject object) throws DebugException {
+        if (exceedsTransferCeiling(object)) {
+            return null;
         }
         String text = object.getValueString(); // raw contents of the StringReference
         if (text == null) {
             text = ""; //$NON-NLS-1$
         }
         boolean truncated = text.length() > limits.maxStringLength();
-        text = StringUtils.truncate(text, limits.maxStringLength());
-        return HeapObjectModel.string(id, text, truncated);
+        return new CappedText(StringUtils.truncate(text, limits.maxStringLength()), truncated);
     }
+
+    private record CappedText(String text, boolean truncated) {}
 
     private HeapObjectModel buildBoxed(IJavaObject object, long id, String wrapperTypeName)
             throws DebugException {
         IJavaValue inner = boxedInner(object);
-        String text = inner == null ? "?" : inner.getValueString(); //$NON-NLS-1$
-        return HeapObjectModel.boxed(id, wrapperTypeName, simpleName(wrapperTypeName), text,
+        return HeapObjectModel.boxed(id, wrapperTypeName, simpleName(wrapperTypeName), boxedText(inner),
                 isJvmCached(wrapperTypeName, inner));
     }
 
@@ -543,17 +552,12 @@ public final class SnapshotExtractor {
     }
 
     private String quotedString(IJavaObject object) throws DebugException {
-        if (exceedsTransferCeiling(object)) {
+        CappedText capped = readCappedString(object);
+        if (capped == null) {
             return "\"...\""; // too large to pull over the wire //$NON-NLS-1$
         }
-        String text = object.getValueString();
-        if (text == null) {
-            text = ""; //$NON-NLS-1$
-        }
-        if (text.length() > limits.maxStringLength()) {
-            return "\"" + text.substring(0, limits.maxStringLength()) + "...\""; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        return "\"" + text + "\""; //$NON-NLS-1$ //$NON-NLS-2$
+        String ellipsis = capped.truncated() ? "..." : ""; //$NON-NLS-1$ //$NON-NLS-2$
+        return "\"" + capped.text() + ellipsis + "\""; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -575,7 +579,10 @@ public final class SnapshotExtractor {
     }
 
     private static String boxedText(IJavaObject object) throws DebugException {
-        IJavaValue inner = boxedInner(object);
+        return boxedText(boxedInner(object));
+    }
+
+    private static String boxedText(IJavaValue inner) throws DebugException {
         return inner == null ? "?" : inner.getValueString(); //$NON-NLS-1$
     }
 
