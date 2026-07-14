@@ -17,7 +17,7 @@ import com.github.ethangodden.debugmemoryview.render.FontKit;
 /**
  * A variable container: an opaque, bordered box with a collapsible "▾/▸ title"
  * header and a body of variable rows. Stack frames are exactly this; heap
- * objects and arrays extend it ({@link HeapObjectFigure}) with id / hover /
+ * objects and arrays extend it ({@link HeapObjectFigure}) with hover /
  * width-clamp behaviour.
  *
  * The status border sits FLUSH against the rows — no inner margin — so a row's

@@ -128,9 +128,6 @@ pull request and uploads the update-site zip as a build artifact.
    sample's Javadoc names a good spot), debug it, and open the **Memory Diagram** view. See
    `samples/README.md`.
 
-For renderer work without a live debugger, `render/DevFixture` provides a hard-coded snapshot + diff
-pair (call `controller.setSnapshot(DevFixture.snapshot(), DevFixture.diff())` from a scratch action).
-
 ## Project layout
 
 | Path | What it is |

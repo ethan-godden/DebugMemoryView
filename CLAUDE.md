@@ -97,9 +97,8 @@ Packages below sit under the root `com.github.ethangodden.debugmemoryview`.
 
 - **JDI/JDT-debug imports are confined to `core[.extract]`.**
   Every JDI wire call happens inside `SnapshotPipeline`'s Job on a worker
-  thread (`SnapshotExtractor` does the walk; the pipeline resolves frame keys)
-  — never on the UI or debug event dispatch thread. Trigger methods capture
-  debug-model references only.
+  thread (`SnapshotExtractor` does the walk) — never on the UI or debug event
+  dispatch thread. Trigger methods capture debug-model references only.
 - **No SWT/Draw2d/JFace in `model` or `core.extract` models.** `model` and
   `HeapLayouter`/`LayoutMemory` stay JDK-only so those test suites need no runtime.
 - Snapshots and diffs are immutable; renderers must treat a `MemoryDiff` as
