@@ -184,11 +184,12 @@ public class HeapLayouterTest {
     @Test
     void testLayoutMemoryDirect() {
         LayoutMemory memory = new LayoutMemory();
-        long a = memory.assign(1L);
-        long b = memory.assign(2L);
-        assertEquals(Long.valueOf(0), Long.valueOf(a), "memory: first assignment");
-        assertEquals(Long.valueOf(1), Long.valueOf(b), "memory: second assignment increments orderKey");
-        assertEquals(Long.valueOf(a), Long.valueOf(memory.assign(1L)), "memory: re-assign keeps orderKey verbatim");
+        memory.assign(1L);
+        memory.assign(2L);
+        assertEquals(Long.valueOf(0), memory.orderKeyOf(1L), "memory: first assignment");
+        assertEquals(Long.valueOf(1), memory.orderKeyOf(2L), "memory: second assignment increments orderKey");
+        memory.assign(1L);
+        assertEquals(Long.valueOf(0), memory.orderKeyOf(1L), "memory: re-assign keeps orderKey verbatim");
         assertTrue(memory.orderKeyOf(42L) == null, "memory: unknown id has no orderKey");
 
         Set<Long> live = new HashSet<>();
@@ -199,6 +200,7 @@ public class HeapLayouterTest {
 
         memory.clear();
         assertTrue(memory.orderKeyOf(1L) == null, "memory: clear drops orderKeys");
-        assertEquals(Long.valueOf(0), Long.valueOf(memory.assign(9L)), "memory: clear resets orderKey counter");
+        memory.assign(9L);
+        assertEquals(Long.valueOf(0), memory.orderKeyOf(9L), "memory: clear resets orderKey counter");
     }
 }

@@ -744,10 +744,9 @@ public class DiagramController {
 
     /**
      * Renders up to {@code cap(capKey)} of {@code total} rows — {@code rowFor.apply(i)} builds each
-     * and {@code addRow} appends it — then a "+N more…" expander when the list is capped. Returns
-     * the number of rows shown so the caller can append its own trailing info rows.
+     * and {@code addRow} appends it — then a "+N more…" expander when the list is capped.
      */
-    private int renderCapped(String capKey, int total, int defaultMax,
+    private void renderCapped(String capKey, int total, int defaultMax,
             IntFunction<IFigure> rowFor, Consumer<IFigure> addRow) {
         int shown = Math.min(total, expansion.capOf(capKey, defaultMax));
         for (int i = 0; i < shown; i++) {
@@ -756,7 +755,6 @@ public class DiagramController {
         if (shown < total) {
             addRow.accept(moreRow(total - shown, capKey));
         }
-        return shown;
     }
 
     /**

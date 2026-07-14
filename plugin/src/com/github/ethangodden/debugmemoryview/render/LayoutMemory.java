@@ -19,8 +19,8 @@ public final class LayoutMemory {
      * An object already remembered keeps its orderKey verbatim (even if its BFS
      * discovery position changed); a new object appends below every existing box.
      */
-    public long assign(long id) {
-        return orderKeys.computeIfAbsent(Long.valueOf(id), key -> Long.valueOf(nextOrderKey++)).longValue();
+    public void assign(long id) {
+        orderKeys.computeIfAbsent(Long.valueOf(id), key -> Long.valueOf(nextOrderKey++));
     }
 
     /** The remembered orderKey, or null for an id never assigned (or evicted). */
