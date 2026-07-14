@@ -28,4 +28,14 @@
          version="0.0.0"
          unpack="false"/>
 
+   <!-- Ship the plug-in's only non-platform dependency so the archive update
+        site installs into an offline Eclipse without contacting the release
+        train. -->
+   <plugin
+         id="org.apache.commons.lang3"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
+
 </feature>
