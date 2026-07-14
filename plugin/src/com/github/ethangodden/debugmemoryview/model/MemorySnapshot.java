@@ -15,7 +15,6 @@ public record MemorySnapshot(
         String threadName,
         long sequence,               // pipeline request sequence that produced it
         List<StackFrameModel> frames,     // index 0 = top of stack
-        int framesOmitted,
         Map<Long, HeapObjectModel> heap,  // unmodifiable LinkedHashMap; BFS order
         List<StaticsClassModel> statics) {  // stack order, deduped
 }

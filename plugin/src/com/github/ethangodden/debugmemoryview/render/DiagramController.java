@@ -412,9 +412,12 @@ public class DiagramController {
                 entries.add(new FrameEntry(ghost, true));
             }
         }
-        // Top of stack first; a popped (ghost) frame sorts above a survivor at equal depth.
+        // Bottom of stack first so the stack grows DOWNWARD, as real memory does:
+        // the newest (top-of-stack) frame renders at the BOTTOM of the column. A
+        // popped (ghost) frame still sorts just above the survivor at equal depth,
+        // so the live top-of-stack frame keeps the true bottom (growth) edge.
         entries.sort((a, b) -> {
-            int byDepth = Integer.compare(b.frame().depthFromBottom(), a.frame().depthFromBottom());
+            int byDepth = Integer.compare(a.frame().depthFromBottom(), b.frame().depthFromBottom());
             return byDepth != 0 ? byDepth : Boolean.compare(b.ghost(), a.ghost());
         });
 
@@ -433,9 +436,6 @@ public class DiagramController {
                 populateFrame(figure, frame, ghost, refs);
             }
             stackContents.add(figure);
-        }
-        if (snapshot.framesOmitted() > 0) {
-            stackContents.add(infoRow("(+" + snapshot.framesOmitted() + " frames omitted)"));
         }
     }
 
@@ -801,8 +801,8 @@ public class DiagramController {
                         tooltipLabel("Target #" + ref.targetId() + " not shown — raise the heap object cap"));
                 continue;
             }
-            // Round-robin lanes for cross-pane edges, assigned in build order (top of
-            // stack first), so parallel curves spread across the gutter.
+            // Round-robin lanes for cross-pane edges, assigned in build order (bottom
+            // of stack first), so parallel curves spread across the gutter.
             int lane = ref.fromStack() ? laneCounter++ % MemoryConnectionRouter.LANES : 0;
             StateConnection connection = new StateConnection(ref.status(), lane, palette);
             connection.setSourceAnchor(new RowEdgeAnchor(ref.row().valueBox(), Rectangle::getCenter));

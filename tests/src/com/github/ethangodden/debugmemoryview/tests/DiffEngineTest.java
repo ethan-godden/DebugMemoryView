@@ -53,11 +53,11 @@ public class DiffEngineTest {
 
     private static MemorySnapshot snap(long seq, List<StackFrameModel> frames,
             Map<Long, HeapObjectModel> heap, List<StaticsClassModel> statics) {
-        return new MemorySnapshot("target", "thread-1", "main", seq, frames, 0, heap, statics);
+        return new MemorySnapshot("target", "thread-1", "main", seq, frames, heap, statics);
     }
 
     private static MemorySnapshot snapOnThread(String threadKey, long seq, List<StackFrameModel> frames) {
-        return new MemorySnapshot("target", threadKey, threadKey, seq, frames, 0,
+        return new MemorySnapshot("target", threadKey, threadKey, seq, frames,
                 Map.of(), List.of());
     }
 

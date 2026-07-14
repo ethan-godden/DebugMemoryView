@@ -59,7 +59,7 @@ public class HeapLayouterTest {
 
     private static MemorySnapshot snap(Map<Long, HeapObjectModel> heap, List<StackFrameModel> frames,
             List<StaticsClassModel> statics) {
-        return new MemorySnapshot("target", "thread-1", "main", 1L, frames, 0, heap, statics);
+        return new MemorySnapshot("target", "thread-1", "main", 1L, frames, heap, statics);
     }
 
     private static List<Long> longs(long... expected) {

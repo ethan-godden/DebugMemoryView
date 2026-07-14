@@ -115,10 +115,8 @@ public final class SnapshotExtractor {
         }
 
         IStackFrame[] raw = javaThread.getStackFrames(); // one wire call, top frame first
-        int taken = Math.min(raw.length, limits.maxFrames());
-        int framesOmitted = raw.length - taken;
-        List<StackFrameModel> frames = new ArrayList<>(taken);
-        for (int i = 0; i < taken; i++) {
+        List<StackFrameModel> frames = new ArrayList<>(raw.length);
+        for (int i = 0; i < raw.length; i++) {
             checkCanceled();
             IJavaStackFrame frame = (IJavaStackFrame) raw[i];
             frames.add(extractFrame(frame, raw.length - 1 - i));
@@ -129,7 +127,7 @@ public final class SnapshotExtractor {
         drainHeapQueue();
 
         return new MemorySnapshot(debugTargetKey, threadKey, threadName, sequence,
-                List.copyOf(frames), framesOmitted,
+                List.copyOf(frames),
                 Collections.unmodifiableMap(heap), statics);
     }
 
