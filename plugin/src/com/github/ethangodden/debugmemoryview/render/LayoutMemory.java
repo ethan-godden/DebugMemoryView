@@ -12,25 +12,25 @@ import java.util.Set;
  */
 public final class LayoutMemory {
 
-    private final Map<Long, Long> orderKeys = new HashMap<>();
+    private final Map<String, Long> orderKeys = new HashMap<>();
     private long nextOrderKey;
 
     /**
-     * An object already remembered keeps its orderKey verbatim (even if its BFS
-     * discovery position changed); a new object appends below every existing box.
+     * A token already remembered keeps its orderKey verbatim (even if its
+     * discovery position changed); a new token appends below every existing box.
      */
-    public void assign(long id) {
-        orderKeys.computeIfAbsent(Long.valueOf(id), key -> Long.valueOf(nextOrderKey++));
+    public void assign(String token) {
+        orderKeys.computeIfAbsent(token, key -> Long.valueOf(nextOrderKey++));
     }
 
-    /** The remembered orderKey, or null for an id never assigned (or evicted). */
-    public Long orderKeyOf(long id) {
-        return orderKeys.get(Long.valueOf(id));
+    /** The remembered orderKey, or null for a token never assigned (or evicted). */
+    public Long orderKeyOf(String token) {
+        return orderKeys.get(token);
     }
 
-    /** Evicts orderKeys of ids absent from the latest snapshot and its ghosts. */
-    public void retainAll(Set<Long> liveIds) {
-        orderKeys.keySet().retainAll(liveIds);
+    /** Evicts orderKeys of tokens absent from the latest snapshot and its ghosts. */
+    public void retainAll(Set<String> liveTokens) {
+        orderKeys.keySet().retainAll(liveTokens);
     }
 
     public void clear() {

@@ -25,7 +25,7 @@ import com.github.ethangodden.debugmemoryview.render.FontKit;
  * width sits at the row's LEFT — a wide header never opens a gap between the
  * colon and the box. A null name omits the label (STRING / BOXED /
  * enum-constant content rows are box-only).
- * Reference rows carry the target heap id and participate in hover/connection
+ * Reference rows carry the target heap box token and participate in hover/connection
  * wiring. Zero vertical margin so consecutive cells stack contiguously; the
  * hover highlight only swaps colors and never changes insets.
  */
@@ -42,15 +42,15 @@ public class VariableRowFigure extends Figure {
      */
     private static final int BOX_KEEP_MAX = 120;
 
-    private final Long targetId; // null for primitives / null refs / unreadables
+    private final String targetToken; // null for primitives / null refs / dangling / unreadables
     private final ChangeStatus status;
     private final Label nameLabel; // null for box-only rows
     private final ValueBoxFigure valueBox;
     private final Color baseBackground; // null when the row has no tint
 
-    public VariableRowFigure(String name, String boxText, Long targetId, ChangeStatus status,
+    public VariableRowFigure(String name, String boxText, String targetToken, ChangeStatus status,
             ColorPalette palette, FontKit fonts) {
-        this.targetId = targetId;
+        this.targetToken = targetToken;
         this.status = status;
         setLayoutManager(new RowLayout());
         setBorder(new CompoundBorder(new StatusStripeBorder(palette.stripe(status)),
@@ -73,8 +73,9 @@ public class VariableRowFigure extends Figure {
         }
     }
 
-    public Long targetId() {
-        return targetId;
+    /** The target heap box token this reference row points at, or null (non-reference row). */
+    public String targetToken() {
+        return targetToken;
     }
 
     public ChangeStatus status() {

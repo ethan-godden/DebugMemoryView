@@ -5,10 +5,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.draw2d.ConnectionLayer;
@@ -29,23 +29,13 @@ import org.eclipse.draw2d.geometry.Rectangle;
 import org.eclipse.jface.resource.ResourceManager;
 import org.eclipse.swt.SWT;
 
-import com.github.ethangodden.debugmemoryview.model.FieldModel;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
-import com.github.ethangodden.debugmemoryview.model.HeapReference;
-import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
-import com.github.ethangodden.debugmemoryview.model.NullValue;
-import com.github.ethangodden.debugmemoryview.model.PrimitiveValue;
-import com.github.ethangodden.debugmemoryview.model.StackFrameModel;
-import com.github.ethangodden.debugmemoryview.model.StaticsClassModel;
-import com.github.ethangodden.debugmemoryview.model.UnreadableValue;
-import com.github.ethangodden.debugmemoryview.model.ValueModel;
-import com.github.ethangodden.debugmemoryview.model.VariableModel;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.ArrayObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.BoxedObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.EnumObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.FieldsObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.StringObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.StubObject;
+import com.github.ethangodden.debugmemoryview.model.Box;
+import com.github.ethangodden.debugmemoryview.model.Frame;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
+import com.github.ethangodden.debugmemoryview.model.Primitive;
+import com.github.ethangodden.debugmemoryview.model.Reference;
+import com.github.ethangodden.debugmemoryview.model.Value;
+import com.github.ethangodden.debugmemoryview.model.Variable;
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 import com.github.ethangodden.debugmemoryview.render.figures.ColumnFigure;
@@ -67,11 +57,19 @@ import com.github.ethangodden.debugmemoryview.ui.ViewSettings;
  * pane contents figure physically moves, figureMoved fires up the tree, and
  * every AbstractConnectionAnchor re-fires — no manual re-anchoring anywhere.
  *
- * All methods must be called on the SWT UI thread.
+ * <p>Consumes the neutral {@link MemoryDiagram} + {@link MemoryDiff}: the stack
+ * is {@link Frame}s (variable rows or a body string), the heap is uniform
+ * {@link Box}es (a header plus {@link Variable} field rows; statics classes are
+ * ordinary boxes emitted first). Presentation is inferred from neutral signals
+ * only — an unexplored box is "(not explored)", omittedCount drives the
+ * "+N not captured" row, a field's {@link Value} decides its cell/arrow.
+ *
+ * <p>All methods must be called on the SWT UI thread.
  */
 public class DiagramController {
 
     private static final String CAP_KEY_HEAP = "heap";
+    private static final String STATICS_TOKEN_PREFIX = "statics:";
     private static final int WHEEL_STEP = 16;
     private static final int FLASH_MILLIS = 900;
 
@@ -99,16 +97,16 @@ public class DiagramController {
     private final ExpansionMemory expansion = new ExpansionMemory();
     private final HoverController hover;
 
-    private final Map<Long, HeapObjectFigure> objectFigures = new HashMap<>();
+    private final Map<String, HeapObjectFigure> objectFigures = new HashMap<>();
     private final Map<VariableRowFigure, StateConnection> connectionsBySourceRow = new HashMap<>();
-    private final Map<Long, HeapObjectModel> modelById = new HashMap<>(); // snapshot + ghosts, for previews
+    private final Map<String, Box> byToken = new HashMap<>(); // diagram heap + ghosts, for previews
 
-    private MemorySnapshot snapshot;
+    private MemoryDiagram diagram;
     private MemoryDiff diff;
     private int laneCounter;
 
     /** A reference row waiting for its arrow (created after all object figures exist). */
-    private record PendingRef(VariableRowFigure row, long targetId, ChangeStatus status, boolean fromStack) {
+    private record PendingRef(VariableRowFigure row, String targetToken, ChangeStatus status, boolean fromStack) {
     }
 
     public DiagramController(FigureCanvas canvas, ResourceManager resources, ViewSettings settings) {
@@ -206,10 +204,10 @@ public class DiagramController {
         return rootPane;
     }
 
-    /** Full rebuild; caches (snapshot, diff) so refresh()/toggles can re-render. */
-    public void setSnapshot(MemorySnapshot newSnapshot, MemoryDiff newDiff) {
-        snapshot = newSnapshot;
-        diff = newDiff != null ? newDiff : MemoryDiff.initial(newSnapshot);
+    /** Full rebuild; caches (diagram, diff) so refresh()/toggles can re-render. */
+    public void setSnapshot(MemoryDiagram newDiagram, MemoryDiff newDiff) {
+        diagram = newDiagram;
+        diff = newDiff != null ? newDiff : MemoryDiff.initial(newDiagram);
         rebuild();
     }
 
@@ -218,9 +216,9 @@ public class DiagramController {
         overlay.setVisible(running);
     }
 
-    /** Empties the diagram and drops the cached snapshot. */
+    /** Empties the diagram and drops the cached diagram. */
     public void clear() {
-        snapshot = null;
+        diagram = null;
         diff = null;
         hover.reset();
         discardFigures();
@@ -235,9 +233,9 @@ public class DiagramController {
         expansion.clear();
     }
 
-    /** Re-renders the cached snapshot (theme switch / preference change pickup). */
+    /** Re-renders the cached diagram (theme switch / preference change pickup). */
     public void refresh() {
-        if (snapshot != null) {
+        if (diagram != null) {
             rebuild();
         } else {
             palette.refresh(canvas, settings.highlightChanges);
@@ -247,7 +245,7 @@ public class DiagramController {
     }
 
     public void expandAll() {
-        if (snapshot == null) {
+        if (diagram == null) {
             return;
         }
         expansion.expandAll();
@@ -255,34 +253,28 @@ public class DiagramController {
     }
 
     public void collapseAll() {
-        if (snapshot == null) {
+        if (diagram == null) {
             return;
         }
-        for (StackFrameModel frame : snapshot.frames()) {
-            expansion.setFrameCollapsed(frame.frameKey(), true);
+        for (Frame frame : diagram.frames()) {
+            expansion.setFrameCollapsed(frame.frameToken(), true);
         }
-        for (Long id : snapshot.heap().keySet()) {
-            expansion.setObjectCollapsed(id.longValue(), true);
+        for (Box box : diagram.heap()) {
+            expansion.setObjectCollapsed(box.boxToken(), true);
         }
-        // Ghost frames/objects render too (when highlighting) — collapse them as well.
-        for (StackFrameModel ghost : diff.deletedFrames()) {
-            expansion.setFrameCollapsed(ghost.frameKey(), true);
+        // Ghost frames/boxes render too (when highlighting) — collapse them as well.
+        for (Frame ghost : diff.deletedFrames()) {
+            expansion.setFrameCollapsed(ghost.frameToken(), true);
         }
-        for (HeapObjectModel ghost : diff.deletedObjects()) {
-            expansion.setObjectCollapsed(ghost.id(), true);
-        }
-        for (StaticsClassModel staticsClass : snapshot.statics()) {
-            expansion.setStaticClassCollapsed(staticsClass.className(), true);
-        }
-        for (StaticsClassModel ghostClass : diff.deletedStaticClasses()) {
-            expansion.setStaticClassCollapsed(ghostClass.className(), true);
+        for (Box ghost : diff.deletedBoxes()) {
+            expansion.setObjectCollapsed(ghost.boxToken(), true);
         }
         rebuild();
     }
 
     public void setShowStatics(boolean show) {
         settings.showStatics = show;
-        if (snapshot != null) {
+        if (diagram != null) {
             rebuild();
         }
     }
@@ -295,13 +287,14 @@ public class DiagramController {
     }
 
     public void clearFieldCapOverrides() {
+        // Every box's field/element/char rows share the "obj:<token>" cap key now
+        // (the heap is uniform boxes), so both the field and array-element menu
+        // items clear the same overrides.
         expansion.clearCaps("obj:");
-        expansion.clearCaps("statics:");
     }
 
     public void clearArrayElementCapOverrides() {
-        expansion.clearCaps("arr:");
-        expansion.clearCaps("str:"); // STRING char cells share the array element cap
+        expansion.clearCaps("obj:");
     }
 
     /**
@@ -354,10 +347,10 @@ public class DiagramController {
             palette.refresh(canvas, settings.highlightChanges);
             applyChrome();
             discardFigures();
-            if (snapshot == null) {
+            if (diagram == null) {
                 return;
             }
-            stackColumn.header().setText("Stack — " + snapshot.threadName());
+            stackColumn.header().setText("Stack — " + diagram.threadName());
             List<PendingRef> refs = new ArrayList<>();
             buildHeap(refs); // first: object figures must exist before arrows and stack tooltips
             buildStack(refs);
@@ -388,7 +381,7 @@ public class DiagramController {
         connectionLayer.removeAll();
         objectFigures.clear();
         connectionsBySourceRow.clear();
-        modelById.clear();
+        byToken.clear();
         laneCounter = 0;
     }
 
@@ -400,37 +393,34 @@ public class DiagramController {
 
     // ------------------------------------------------------------------ stack
 
-    private record FrameEntry(StackFrameModel frame, boolean ghost) {
+    private record FrameEntry(Frame frame, boolean ghost) {
     }
 
     private void buildStack(List<PendingRef> refs) {
         List<FrameEntry> entries = new ArrayList<>();
-        for (StackFrameModel frame : snapshot.frames()) {
-            entries.add(new FrameEntry(frame, false));
+        // The diagram carries frames top-of-stack first; render bottom-of-stack
+        // first so the stack grows DOWNWARD, as real memory does (the newest,
+        // top-of-stack frame lands at the BOTTOM of the column).
+        List<Frame> live = diagram.frames();
+        for (int i = live.size() - 1; i >= 0; i--) {
+            entries.add(new FrameEntry(live.get(i), false));
         }
         if (palette.isHighlighting()) {
-            for (StackFrameModel ghost : diff.deletedFrames()) {
+            for (Frame ghost : diff.deletedFrames()) {
                 entries.add(new FrameEntry(ghost, true));
             }
         }
-        // Bottom of stack first so the stack grows DOWNWARD, as real memory does:
-        // the newest (top-of-stack) frame renders at the BOTTOM of the column. A
-        // popped (ghost) frame still sorts just above the survivor at equal depth,
-        // so the live top-of-stack frame keeps the true bottom (growth) edge.
-        entries.sort((a, b) -> {
-            int byDepth = Integer.compare(a.frame().depthFromBottom(), b.frame().depthFromBottom());
-            return byDepth != 0 ? byDepth : Boolean.compare(b.ghost(), a.ghost());
-        });
 
         for (FrameEntry entry : entries) {
-            StackFrameModel frame = entry.frame();
-            String frameKey = frame.frameKey();
+            Frame frame = entry.frame();
+            String frameToken = frame.frameToken();
             boolean ghost = entry.ghost();
-            ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.frameStatusOf(frameKey));
+            ChangeStatus status = ghost ? ChangeStatus.DELETED
+                    : palette.effective(diff.frameStatusOf(frameToken));
             // Every frame builds its rows eagerly; only user-collapsed frames stay shut.
-            boolean expanded = !expansion.isFrameCollapsed(frameKey);
-            ContainerFigure figure = new ContainerFigure(frame.label(), status, expanded, palette, fonts, () -> {
-                expansion.setFrameCollapsed(frameKey, expanded);
+            boolean expanded = !expansion.isFrameCollapsed(frameToken);
+            ContainerFigure figure = new ContainerFigure(frame.header(), status, expanded, palette, fonts, () -> {
+                expansion.setFrameCollapsed(frameToken, expanded);
                 rebuild();
             });
             if (expanded) {
@@ -440,31 +430,25 @@ public class DiagramController {
         }
     }
 
-    private void populateFrame(ContainerFigure figure, StackFrameModel frame, boolean ghost,
-            List<PendingRef> refs) {
-        String frameKey = frame.frameKey();
-        if (frame.obsolete()) {
-            figure.addRow(infoRow("(obsolete frame)"));
+    private void populateFrame(ContainerFigure figure, Frame frame, boolean ghost, List<PendingRef> refs) {
+        String frameToken = frame.frameToken();
+        if (frame.hasBody()) {
+            // Native/obsolete/unreadable frame: a body string stands in for variable rows.
+            figure.addRow(infoRow(frame.body()));
+            return;
         }
-        if (frame.nativeFrame()) {
-            figure.addRow(infoRow("(native method)"));
-        }
-        if (!frame.localsAvailable() && !frame.obsolete() && !frame.nativeFrame()) {
-            figure.addRow(infoRow("(locals unavailable)"));
-        }
-        List<VariableModel> variables = frame.allVariables(); // this first, then locals
-        renderCapped("frame:" + frameKey, variables.size(), settings.maxLocalsPerFrameRendered, i -> {
-            VariableModel variable = variables.get(i);
+        List<Variable> variables = frame.variables(); // this first, then locals
+        renderCapped("frame:" + frameToken, variables.size(), settings.maxLocalsPerFrameRendered, i -> {
+            Variable variable = variables.get(i);
             ChangeStatus status = ghost ? ChangeStatus.DELETED
-                    : palette.effective(diff.variableStatusOf(variable.variableKey(frameKey)));
-            return newRow(variable.name(), variable.declaredTypeName(), variable.value(), status, refs, true);
+                    : palette.effective(diff.variableStatusOf(frameToken, variable.symbolId()));
+            return newRow(variable, status, refs, true);
         }, figure::addRow);
         if (!ghost && palette.isHighlighting()) {
-            List<VariableModel> ghostVariables = diff.deletedVariables().get(frameKey);
+            List<Variable> ghostVariables = diff.deletedVariables().get(frameToken);
             if (ghostVariables != null) {
-                for (VariableModel variable : ghostVariables) {
-                    figure.addRow(newRow(variable.name(), variable.declaredTypeName(), variable.value(),
-                            ChangeStatus.DELETED, refs, true));
+                for (Variable variable : ghostVariables) {
+                    figure.addRow(newRow(variable, ChangeStatus.DELETED, refs, true));
                 }
             }
         }
@@ -473,25 +457,40 @@ public class DiagramController {
     // ------------------------------------------------------------------- heap
 
     private void buildHeap(List<PendingRef> refs) {
-        List<HeapObjectModel> ghosts = palette.isHighlighting() ? diff.deletedObjects() : List.of();
-        modelById.putAll(snapshot.heap());
-        for (HeapObjectModel ghost : ghosts) {
-            modelById.put(Long.valueOf(ghost.id()), ghost);
+        List<Box> ghosts = new ArrayList<>();
+        if (palette.isHighlighting()) {
+            for (Box ghost : diff.deletedBoxes()) {
+                if (isVisibleBox(ghost.boxToken())) {
+                    ghosts.add(ghost);
+                }
+            }
+        }
+        for (Box box : diagram.heap()) {
+            byToken.put(box.boxToken(), box);
+        }
+        for (Box ghost : ghosts) {
+            byToken.put(ghost.boxToken(), ghost);
         }
 
-        List<Long> order = HeapLayouter.assign(snapshot, ghosts, layoutMemory);
+        List<String> order = HeapLayouter.assign(diagram, ghosts, layoutMemory);
 
-        // Heap cap chosen in extraction BFS order (heap map order): roots-first survival.
+        Set<String> ghostTokens = new HashSet<>();
+        for (Box ghost : ghosts) {
+            ghostTokens.add(ghost.boxToken());
+        }
+
+        // Heap cap chosen in build (heap map) order: roots-first survival. Only the
+        // live, visible (statics filtered) boxes count toward the cap.
+        List<String> visibleLive = new ArrayList<>();
+        for (Box box : diagram.heap()) {
+            if (isVisibleBox(box.boxToken())) {
+                visibleLive.add(box.boxToken());
+            }
+        }
         int heapCap = expansion.capOf(CAP_KEY_HEAP, settings.maxHeapObjectsRendered);
-        int shown = Math.min(snapshot.heap().size(), heapCap);
-        Set<Long> rendered = snapshot.heap().keySet().stream()
-                .limit(shown)
-                .collect(Collectors.toCollection(HashSet::new));
-        int omitted = snapshot.heap().size() - shown;
-        Set<Long> ghostIds = new HashSet<>();
-        for (HeapObjectModel ghost : ghosts) {
-            ghostIds.add(Long.valueOf(ghost.id()));
-        }
+        int shown = Math.min(visibleLive.size(), heapCap);
+        Set<String> rendered = new HashSet<>(visibleLive.subList(0, shown));
+        int omitted = visibleLive.size() - shown;
 
         // One vertical column of boxes; ~16 px between OBJECTS (rows inside a box
         // stack with zero spacing — they read as contiguous memory cells).
@@ -501,25 +500,19 @@ public class DiagramController {
         bodyLayout.setStretchMinorAxis(false); // boxes take natural width <= 320
         heapBody.setLayoutManager(bodyLayout);
 
-        // Statics are heap roots: each class with static fields renders as its own
-        // container box at the top of the column, above the objects.
-        boolean hasStatics = !snapshot.statics().isEmpty()
-                || (palette.isHighlighting()
-                        && (!diff.deletedStaticClasses().isEmpty() || !diff.deletedStaticFields().isEmpty()));
-        if (settings.showStatics && hasStatics) {
-            buildStatics(refs, heapBody);
-        }
-
-        for (Long id : order) {
-            boolean ghost = ghostIds.contains(id);
-            if (!ghost && !rendered.contains(id)) {
+        for (String token : order) {
+            boolean ghost = ghostTokens.contains(token);
+            if (!isVisibleBox(token)) {
+                continue; // statics hidden by the toggle
+            }
+            if (!ghost && !rendered.contains(token)) {
                 continue;
             }
-            HeapObjectModel model = modelById.get(id);
-            if (model == null) {
+            Box box = byToken.get(token);
+            if (box == null) {
                 continue;
             }
-            heapBody.add(buildObjectFigure(model, ghost, refs));
+            heapBody.add(buildObjectFigure(box, ghost, refs));
         }
         if (omitted > 0) {
             heapBody.add(unrenderedBox(omitted));
@@ -527,106 +520,67 @@ public class DiagramController {
         heapContents.add(heapBody);
     }
 
-    private HeapObjectFigure buildObjectFigure(HeapObjectModel model, boolean ghost, List<PendingRef> refs) {
-        long id = model.id();
-        ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.objectStatusOf(id));
-        boolean collapsed = expansion.isObjectCollapsed(id);
-        HeapObjectFigure figure = new HeapObjectFigure(objectTitle(model), status, collapsed, palette, fonts,
+    /** A box is hidden only when it is a statics class and the statics toggle is off. */
+    private boolean isVisibleBox(String token) {
+        return settings.showStatics || !token.startsWith(STATICS_TOKEN_PREFIX);
+    }
+
+    private HeapObjectFigure buildObjectFigure(Box box, boolean ghost, List<PendingRef> refs) {
+        String token = box.boxToken();
+        ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.boxStatusOf(token));
+        boolean collapsed = expansion.isObjectCollapsed(token);
+        HeapObjectFigure figure = new HeapObjectFigure(box.header(), status, collapsed, palette, fonts,
                 () -> {
-                    expansion.setObjectCollapsed(id, !collapsed);
+                    expansion.setObjectCollapsed(token, !collapsed);
                     rebuild();
                 });
-        if (model instanceof StringObject str) {
-            // Full quoted content on the header (rows are char cells); works collapsed too.
-            String content = str.displayText() != null ? str.displayText() : "";
-            figure.setHeaderToolTip(tooltipLabel(
-                    "\"" + content + (str.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\""));
-        }
         if (!collapsed) {
-            populateObject(figure, model, ghost, refs);
+            populateObject(figure, box, ghost, refs);
         }
-        objectFigures.put(Long.valueOf(id), figure); // aliasing: same id -> same figure instance
+        objectFigures.put(token, figure); // aliasing: same token -> same figure instance
         return figure;
     }
 
-    private void populateObject(HeapObjectFigure figure, HeapObjectModel model, boolean ghost,
-            List<PendingRef> refs) {
-        long id = model.id();
-        ChangeStatus plainStatus = ghost ? ChangeStatus.DELETED : ChangeStatus.UNCHANGED;
-        switch (model) {
-            case StringObject str -> {
-                // Char-array rendering: one indexed cell per extracted character
-                // ("0 : [h]"), capped like an array. Strings are immutable-by-identity
-                // in the diff (no per-element statuses); rows stay UNCHANGED-styled.
-                // The full quoted content lives in the header tooltip (buildObjectFigure).
-                String content = str.displayText() != null ? str.displayText() : "";
-                // Chars are capped like an array; only unrendered EXTRACTED chars count toward "+N more".
-                renderCapped("str:" + id, content.length(), settings.maxArrayElementsRendered, i -> {
-                    char c = content.charAt(i);
-                    VariableRowFigure row = new VariableRowFigure(Integer.toString(i),
-                            String.valueOf(c), null, plainStatus, palette, fonts);
-                    hover.hookRow(row);
-                    row.setToolTip(tooltipLabel("char : '" + c + "'"));
-                    return row;
-                }, figure::addRow);
-                if (str.textTruncated()) {
-                    figure.addRow(infoRow("(truncated)"));
-                }
-            }
-            case BoxedObject box -> {
-                String value = box.displayText() != null ? box.displayText() : "?";
-                String text = value + (box.jvmCached() ? "  (JVM cache)" : "");
-                VariableRowFigure row = new VariableRowFigure(null, text, null, plainStatus, palette, fonts);
-                hover.hookRow(row);
-                figure.addRow(row);
-            }
-            case StubObject stub -> figure.addRow(infoRow("(not explored)"));
-            case ArrayObject arr -> {
-                String componentType = componentTypeOf(arr.typeName());
-                // The index is the identifier ("0 : <box>"); length lives in the header.
-                // The component type plays the declared type in the row tooltips.
-                populateMembers(figure, "arr:" + id, arr.elements().size(),
-                        settings.maxArrayElementsRendered, i -> {
-                            ChangeStatus status = ghost ? ChangeStatus.DELETED
-                                    : palette.effective(diff.elementChanged(id, i) ? ChangeStatus.CHANGED
-                                            : ChangeStatus.UNCHANGED);
-                            return newRow(Integer.toString(i), componentType, arr.elements().get(i),
-                                    status, refs, false);
-                        }, arr.elementsOmitted());
-            }
-            case FieldsObject fields -> {
-                if (fields instanceof EnumObject en && en.enumConstantName() != null) {
-                    VariableRowFigure constantRow = new VariableRowFigure(null, en.enumConstantName(),
-                            null, plainStatus, palette, fonts);
-                    hover.hookRow(constantRow);
-                    figure.addRow(constantRow);
-                }
-                populateMembers(figure, "obj:" + id, fields.fields().size(),
-                        settings.maxFieldsPerObjectRendered, i -> {
-                            FieldModel field = fields.fields().get(i);
-                            ChangeStatus status = ghost ? ChangeStatus.DELETED
-                                    : palette.effective(diff.fieldStatusOf(id, field.fieldKey()));
-                            return newRow(field.name(), field.declaredTypeName(), field.value(), status, refs, false);
-                        }, fields.fieldsOmitted());
-            }
+    /**
+     * Uniform box body: a single muted "(not explored)" row for an unexplored box,
+     * otherwise one row per {@link Variable} field ("identifier : [value box]"),
+     * a "+N more…" expander when the render cap bites, and a "+N not captured"
+     * row for the fields dropped at extraction ({@code omittedCount}). Strings,
+     * arrays, boxed values and enums all arrive as ordinary fields, so no
+     * per-kind special-casing is needed.
+     */
+    private void populateObject(HeapObjectFigure figure, Box box, boolean ghost, List<PendingRef> refs) {
+        if (!box.explored()) {
+            figure.addRow(infoRow("(not explored)"));
+            return;
+        }
+        String token = box.boxToken();
+        List<Variable> fields = box.fields();
+        renderCapped("obj:" + token, fields.size(), fieldCapFor(token), i -> {
+            Variable field = fields.get(i);
+            ChangeStatus status = ghost ? ChangeStatus.DELETED
+                    : palette.effective(diff.fieldStatusOf(token, field.symbolId()));
+            return newRow(field, status, refs, false);
+        }, figure::addRow);
+        if (box.omittedCount() > 0) {
+            figure.addRow(infoRow("(+" + box.omittedCount() + " not captured)"));
         }
     }
 
-    /** "int[]" -> "int", "demo.Point[][]" -> "demo.Point[]"; null when not an array type name. */
-    private static String componentTypeOf(String arrayTypeName) {
-        if (arrayTypeName != null && arrayTypeName.endsWith("[]")) {
-            return arrayTypeName.substring(0, arrayTypeName.length() - 2);
+    /**
+     * The default render cap for a box's rows. Positional fields (arrays / string
+     * chars, whose first field identifier is "0") cap like an array; named fields
+     * cap like object fields. Statics boxes use the field cap.
+     */
+    private int fieldCapFor(String token) {
+        if (token.startsWith(STATICS_TOKEN_PREFIX)) {
+            return settings.maxFieldsPerObjectRendered;
         }
-        return null;
-    }
-
-    private static String objectTitle(HeapObjectModel model) {
-        if (model instanceof ArrayObject arr) {
-            String simple = arr.simpleName() != null ? arr.simpleName() : "?[]";
-            String base = StringUtils.substringBefore(simple, "[]");
-            return base + "[" + arr.arrayLength() + "] #" + arr.id();
+        Box box = byToken.get(token);
+        if (box != null && !box.fields().isEmpty() && "0".equals(box.fields().get(0).identifier())) {
+            return settings.maxArrayElementsRendered;
         }
-        return model.simpleName() + " #" + model.id();
+        return settings.maxFieldsPerObjectRendered;
     }
 
     private IFigure unrenderedBox(int omitted) {
@@ -644,96 +598,71 @@ public class DiagramController {
         return box;
     }
 
-    // ---------------------------------------------------------------- statics
-
-    private void buildStatics(List<PendingRef> refs, Figure heapBody) {
-        for (StaticsClassModel staticsClass : snapshot.statics()) {
-            heapBody.add(buildStaticClass(staticsClass, false, refs));
-        }
-        if (palette.isHighlighting()) {
-            for (StaticsClassModel ghostClass : diff.deletedStaticClasses()) {
-                heapBody.add(buildStaticClass(ghostClass, true, refs));
-            }
-        }
-    }
-
-    /** One static-fields class as a container box titled "Class <name>" — same chrome as an object box. */
-    private ContainerFigure buildStaticClass(StaticsClassModel staticsClass, boolean ghost, List<PendingRef> refs) {
-        // Header shows the simple name; the fully-qualified className stays the
-        // stable key for collapse state, caps, and ghost-field lookup.
-        String className = staticsClass.className();
-        ChangeStatus status = ghost ? ChangeStatus.DELETED : ChangeStatus.UNCHANGED;
-        boolean collapsed = expansion.isStaticClassCollapsed(className);
-        ContainerFigure figure = new ContainerFigure("Class " + staticsClass.simpleName(), status, !collapsed,
-                palette, fonts,
-                () -> {
-                    expansion.setStaticClassCollapsed(className, !collapsed);
-                    rebuild();
-                });
-        if (collapsed) {
-            return figure;
-        }
-        if (ghost) {
-            // Whole class removed: every field renders as a DELETED ghost row.
-            for (FieldModel field : staticsClass.fields()) {
-                figure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(),
-                        ChangeStatus.DELETED, refs, false));
-            }
-            return figure;
-        }
-        populateMembers(figure, "statics:" + className, staticsClass.fields().size(),
-                settings.maxFieldsPerObjectRendered, i -> {
-                    FieldModel field = staticsClass.fields().get(i);
-                    ChangeStatus fieldStatus = palette.effective(diff.staticStatusOf(field.fieldKey()));
-                    return newRow(field.name(), field.declaredTypeName(), field.value(), fieldStatus, refs, false);
-                }, staticsClass.fieldsOmitted());
-        if (palette.isHighlighting()) {
-            List<FieldModel> ghostFields = diff.deletedStaticFields().get(className);
-            if (ghostFields != null) {
-                for (FieldModel field : ghostFields) {
-                    figure.addRow(newRow(field.name(), field.declaredTypeName(), field.value(),
-                            ChangeStatus.DELETED, refs, false));
-                }
-            }
-        }
-        return figure;
-    }
-
     // ------------------------------------------------------------------- rows
 
     /**
-     * "identifier : <box>" — no type text (types live in the heap box headers).
-     * The box holds the primitive text; it is empty for references (the arrow
-     * tail sits inside it) and nulls, "?" for unreadables. The declared type
-     * moves into the tooltip.
+     * "identifier : &lt;box&gt;" — no type text (types live in the heap box headers).
+     * The box holds the primitive text; it is empty for null cells and normal
+     * references (the arrow tail sits inside it), and shows a distinct dangling
+     * marker for a reference that resolves to no box. A box-only field (the enum
+     * constant marker: value==null and no declared type) drops the identifier and
+     * shows the identifier text inside the box. The declared type moves into the
+     * tooltip.
      */
-    private VariableRowFigure newRow(String name, String declaredTypeName, ValueModel value, ChangeStatus status,
-            List<PendingRef> refs, boolean fromStack) {
-        Long targetId = value instanceof HeapReference ref ? Long.valueOf(ref.targetId()) : null;
-        VariableRowFigure row = new VariableRowFigure(name, boxTextOf(value), targetId, status, palette, fonts);
-        hover.hookRow(row); // every row hover-tints; reference rows add click/preview/target outline
-        if (targetId != null) {
-            refs.add(new PendingRef(row, targetId.longValue(), status, fromStack));
-        } else if (value instanceof PrimitiveValue primitive) {
-            row.setToolTip(tooltipLabel(typedTooltip(declaredTypeName, primitive.text())));
-        } else if (value instanceof NullValue) {
-            row.setToolTip(tooltipLabel(typedTooltip(declaredTypeName, "null")));
-        } else if (value instanceof UnreadableValue unreadable) {
-            row.setToolTip(tooltipLabel(unreadable.error()));
+    private VariableRowFigure newRow(Variable variable, ChangeStatus status, List<PendingRef> refs,
+            boolean fromStack) {
+        Value value = variable.value();
+
+        // Box-only content row: the enum constant marker arrives as a leading field
+        // with value==null and no declared type. Its identifier is the content shown
+        // in the box (no label, no arrow), mirroring the old enum-constant/boxed row.
+        if (value == null && variable.typeLabel() == null) {
+            VariableRowFigure row = new VariableRowFigure(null, variable.identifier(), null, status, palette, fonts);
+            hover.hookRow(row);
+            return row;
         }
+
+        if (value instanceof Reference ref) {
+            Optional<Box> target = diagram.resolve(ref);
+            if (target.isEmpty()) {
+                return danglingRow(variable, status);
+            }
+            String targetToken = target.get().boxToken();
+            VariableRowFigure row = new VariableRowFigure(variable.identifier(), "", targetToken, status,
+                    palette, fonts);
+            hover.hookRow(row); // reference rows add click/preview/target outline
+            refs.add(new PendingRef(row, targetToken, status, fromStack));
+            return row;
+        }
+
+        // Primitive or absent/null value: an empty cell (primitives fill it), no arrow.
+        VariableRowFigure row = new VariableRowFigure(variable.identifier(), boxTextOf(value), null, status,
+                palette, fonts);
+        hover.hookRow(row); // every row hover-tints
+        row.setToolTip(tooltipLabel(typedTooltip(variable.typeLabel(),
+                value instanceof Primitive primitive ? primitive.value() : "null")));
         return row;
     }
 
-    /** In-box text: primitives verbatim (char-capped), "?" for unreadables, else empty. */
-    private String boxTextOf(ValueModel value) {
-        if (value instanceof PrimitiveValue primitive) {
+    /**
+     * A dangling reference: the target cell holds no box. Rendered with a distinct
+     * severed-stub glyph in the cell — no arrow (unlike a live reference) and not
+     * an empty cell (unlike a null value) — so all three read differently.
+     */
+    private VariableRowFigure danglingRow(Variable variable, ChangeStatus status) {
+        VariableRowFigure row = new VariableRowFigure(variable.identifier(), "⇥⌀", null, status, palette, fonts);
+        hover.hookRow(row);
+        row.setToolTip(tooltipLabel(typedTooltip(variable.typeLabel(), "dangling reference (no target)")));
+        return row;
+    }
+
+    /** In-box text: primitives verbatim (char-capped), else empty (null cell). */
+    private String boxTextOf(Value value) {
+        if (value instanceof Primitive primitive) {
             // abbreviate's width includes the marker, so +1 keeps "maxValueChars chars + …".
-            return StringUtils.abbreviate(primitive.text(), Ellipsis.ELLIPSIS, settings.maxValueChars + 1);
+            return StringUtils.abbreviate(primitive.value(), Ellipsis.ELLIPSIS, settings.maxValueChars + 1);
         }
-        if (value instanceof UnreadableValue) {
-            return "?";
-        }
-        return ""; // HeapReference / NullValue: an empty cell
+        return ""; // Reference / null: an empty cell
     }
 
     private static String typedTooltip(String declaredTypeName, String fullValue) {
@@ -752,20 +681,6 @@ public class DiagramController {
         }
         if (shown < total) {
             addRow.accept(moreRow(total - shown, capKey));
-        }
-    }
-
-    /**
-     * A member box's body: up to the render cap of {@code count} rows (built by
-     * {@code rowFor}, with a "+N more…" expander when the cap bites), then a
-     * "(+N not captured)" info row for the {@code omitted} members dropped at
-     * extraction. Shared by object fields, array elements, and static fields.
-     */
-    private void populateMembers(ContainerFigure figure, String capKey, int count, int defaultMax,
-            IntFunction<IFigure> rowFor, int omitted) {
-        renderCapped(capKey, count, defaultMax, rowFor, figure::addRow);
-        if (omitted > 0) {
-            figure.addRow(infoRow("(+" + omitted + " not captured)"));
         }
     }
 
@@ -790,11 +705,11 @@ public class DiagramController {
 
     private void createConnections(List<PendingRef> refs) {
         for (PendingRef ref : refs) {
-            HeapObjectFigure target = objectFigures.get(Long.valueOf(ref.targetId()));
+            HeapObjectFigure target = objectFigures.get(ref.targetToken());
             if (target == null) {
                 // Target elided by the heap cap: no arrow, explain on the row instead.
                 ref.row().setToolTip(
-                        tooltipLabel("Target #" + ref.targetId() + " not shown — raise the heap object cap"));
+                        tooltipLabel("Target " + ref.targetToken() + " not shown — raise the heap object cap"));
                 continue;
             }
             // Round-robin lanes for cross-pane edges, assigned in build order (bottom
@@ -803,8 +718,8 @@ public class DiagramController {
             StateConnection connection = new StateConnection(ref.status(), lane, palette);
             connection.setSourceAnchor(new RowEdgeAnchor(ref.row().valueBox(), Rectangle::getCenter));
             // Cross-pane arrows land on the row's LEFT edge (facing the gutter);
-            // same-viewport ones (heap/statics sources) land on its RIGHT edge,
-            // matching the router's right-side arcs.
+            // same-viewport ones (heap sources) land on its RIGHT edge, matching
+            // the router's right-side arcs.
             connection.setTargetAnchor(ref.fromStack()
                     ? new RowEdgeAnchor(target.getReferenceTargetFigure(), Rectangle::getLeft)
                     : new RowEdgeAnchor(target.getReferenceTargetFigure(), Rectangle::getRight));
@@ -823,8 +738,8 @@ public class DiagramController {
         return connectionsBySourceRow.get(row);
     }
 
-    HeapObjectFigure objectFigureFor(long id) {
-        return objectFigures.get(Long.valueOf(id));
+    HeapObjectFigure objectFigureFor(String token) {
+        return objectFigures.get(token);
     }
 
     /** Re-adds the connection so it paints on top of its siblings while hovered. */
@@ -832,22 +747,22 @@ public class DiagramController {
         connectionLayer.add(connection);
     }
 
-    /** Lazy tooltip body for a reference row; null when the target model is unknown. */
+    /** Lazy tooltip body for a reference row; null when the target box is unknown. */
     IFigure buildPreview(VariableRowFigure row) {
-        if (row.targetId() == null) {
+        if (row.targetToken() == null) {
             return null;
         }
-        HeapObjectModel model = modelById.get(row.targetId());
-        return model == null ? null : new ObjectPreviewFigure(model, palette, fonts);
+        Box box = byToken.get(row.targetToken());
+        return box == null ? null : new ObjectPreviewFigure(box, palette, fonts);
     }
 
     /** Click-to-reveal: scroll the heap pane to the target and flash its outline. */
     void revealTarget(VariableRowFigure row) {
-        if (row.targetId() == null) {
+        if (row.targetToken() == null) {
             return;
         }
-        long id = row.targetId().longValue();
-        HeapObjectFigure target = objectFigures.get(Long.valueOf(id));
+        String token = row.targetToken();
+        HeapObjectFigure target = objectFigures.get(token);
         if (target == null) {
             return;
         }
@@ -861,7 +776,7 @@ public class DiagramController {
                 return;
             }
             // Only un-flash if this figure is still current and not hover-held.
-            if (objectFigures.get(Long.valueOf(id)) == target && !hover.isCurrentTarget(target)) {
+            if (objectFigures.get(token) == target && !hover.isCurrentTarget(target)) {
                 target.setHoverHighlight(false);
             }
         });
@@ -883,7 +798,7 @@ public class DiagramController {
      * the intra-heap arcs' bow baseline. Boxes align left but their right edges
      * are ragged, so an arc must clear every box it passes, not just its
      * endpoints'. The heap contents hold the heap body, whose children are the
-     * static-class boxes (at the top) and the object boxes.
+     * boxes (statics boxes at the top, then objects).
      */
     private int heapArcBaseline(int topY, int bottomY) {
         int right = Integer.MIN_VALUE;

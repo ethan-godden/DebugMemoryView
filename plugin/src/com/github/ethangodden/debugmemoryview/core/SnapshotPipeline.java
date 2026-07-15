@@ -25,7 +25,7 @@ import org.eclipse.ui.PlatformUI;
 
 import com.github.ethangodden.debugmemoryview.Activator;
 import com.github.ethangodden.debugmemoryview.core.extract.SnapshotExtractor;
-import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
 import com.github.ethangodden.debugmemoryview.model.diff.DiffEngine;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 
@@ -52,7 +52,7 @@ public final class SnapshotPipeline {
     }
 
     /** One thread's cached suspend state, keyed by threadKey; the three parts always move together. */
-    private record Baseline(MemorySnapshot snapshot, MemoryDiff diff, long generation) {
+    private record Baseline(MemoryDiagram diagram, MemoryDiff diff, long generation) {
     }
 
     private final AtomicLong seq = new AtomicLong();
@@ -249,19 +249,19 @@ public final class SnapshotPipeline {
                 // wrongly wipe the change highlighting by re-baselining).
                 Baseline baseline = baselines.get(threadKey);
                 if (baseline != null && baseline.generation() == generation) {
-                    publish(req.seq(), baseline.snapshot(), baseline.diff());
+                    publish(req.seq(), baseline.diagram(), baseline.diff());
                     return Status.OK_STATUS;
                 }
 
-                MemorySnapshot snapshot = new SnapshotExtractor(limits, monitor, req.seq())
+                MemoryDiagram diagram = new SnapshotExtractor(limits, monitor, req.seq())
                         .extract(thread, targetKey, threadKey);
                 if (req.seq() != seq.get() || monitor.isCanceled()) {
                     return Status.CANCEL_STATUS; // superseded during the run; never store or show
                 }
-                MemorySnapshot previous = baseline != null ? baseline.snapshot() : null;
-                MemoryDiff diff = DiffEngine.diff(previous, snapshot);
-                baselines.put(threadKey, new Baseline(snapshot, diff, generation));
-                publish(req.seq(), snapshot, diff);
+                MemoryDiagram previous = baseline != null ? baseline.diagram() : null;
+                MemoryDiff diff = DiffEngine.diff(previous, diagram);
+                baselines.put(threadKey, new Baseline(diagram, diff, generation));
+                publish(req.seq(), diagram, diff);
                 return Status.OK_STATUS;
             } catch (OperationCanceledException e) {
                 return Status.CANCEL_STATUS;
@@ -340,7 +340,7 @@ public final class SnapshotPipeline {
 
     // ---- marshalling to the UI thread ---------------------------------------
 
-    private void publish(long publishedSeq, MemorySnapshot snapshot, MemoryDiff diff) {
+    private void publish(long publishedSeq, MemoryDiagram diagram, MemoryDiff diff) {
         Display display = displayOrNull();
         if (display == null) {
             return;
@@ -349,9 +349,9 @@ public final class SnapshotPipeline {
             if (publishedSeq != seq.get()) {
                 return; // superseded while queued
             }
-            lastPublishedTargetKey = snapshot.debugTargetKey();
+            lastPublishedTargetKey = diagram.debugTargetToken();
             for (ISnapshotConsumer consumer : consumers) {
-                consumer.snapshotReady(snapshot, diff);
+                consumer.snapshotReady(diagram, diff);
             }
         });
     }

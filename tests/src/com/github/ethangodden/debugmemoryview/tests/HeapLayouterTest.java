@@ -1,206 +1,212 @@
 package com.github.ethangodden.debugmemoryview.tests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
-import com.github.ethangodden.debugmemoryview.model.FieldModel;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
-import com.github.ethangodden.debugmemoryview.model.HeapReference;
-import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
-import com.github.ethangodden.debugmemoryview.model.StackFrameModel;
-import com.github.ethangodden.debugmemoryview.model.StaticsClassModel;
-import com.github.ethangodden.debugmemoryview.model.VariableModel;
+import com.github.ethangodden.debugmemoryview.model.Box;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagramBuilder;
 import com.github.ethangodden.debugmemoryview.render.HeapLayouter;
 import com.github.ethangodden.debugmemoryview.render.LayoutMemory;
 
-/** JUnit 5 tests for HeapLayouter + LayoutMemory. */
+/**
+ * JUnit 5 tests for the token-keyed {@link HeapLayouter} + {@link LayoutMemory}.
+ *
+ * <p>The new layouter trusts {@link MemoryDiagram#heap()}'s box order and stabilizes it with a
+ * {@link LayoutMemory} keyed on each box's {@code boxToken}: a box remembered from an earlier
+ * rebuild keeps its slot (sticky orderKey) even when the diagram reorders the heap; a never-seen
+ * box appends after all remembered ones; ghost boxes (present only in the ghosts list) keep or get
+ * a slot; tokens absent from the latest diagram+ghosts are evicted.
+ */
 public class HeapLayouterTest {
 
-    // ---------- model builders ----------
-    private static HeapReference ref(long id) {
-        return new HeapReference(id, "T");
+    // ---------- builder helpers ----------
+
+    /** A fresh builder for a single-frame diagram (frame content is irrelevant to heap ordering). */
+    private static MemoryDiagramBuilder builder() {
+        MemoryDiagramBuilder b = new MemoryDiagramBuilder("target", "thread-1", "main", 1L);
+        b.pushFrame("Demo.main()V:0", "Demo.main() line 1", List.of());
+        return b;
     }
 
-    /** PLAIN object whose fields reference the given child ids in order. */
-    private static HeapObjectModel node(long id, long... childIds) {
-        List<FieldModel> fields = new ArrayList<>();
-        for (int i = 0; i < childIds.length; i++) {
-            fields.add(new FieldModel("f" + i, "T", "T", ref(childIds[i])));
-        }
-        return HeapObjectModel.plain(id, "T", "T", fields, 0);
+    /** Add a fully-explored, field-less box with the given token as both token and header. */
+    private static void box(MemoryDiagramBuilder b, String token) {
+        b.addBox(token, token, List.of(), true, 0);
     }
 
-    private static Map<Long, HeapObjectModel> heap(HeapObjectModel... objects) {
-        Map<Long, HeapObjectModel> m = new LinkedHashMap<>();
-        for (HeapObjectModel o : objects) {
-            m.put(o.id(), o);
-        }
-        return m;
+    /** A standalone ghost box (lives only in the ghosts list, never in the heap). */
+    private static Box ghost(String token) {
+        return new Box(token, token, List.of(), true, 0);
     }
 
-    private static StackFrameModel frameWithRoots(long... rootIds) {
-        List<VariableModel> locals = new ArrayList<>();
-        for (int i = 0; i < rootIds.length; i++) {
-            locals.add(new VariableModel("v" + i, "T", ref(rootIds[i])));
-        }
-        return new StackFrameModel(StackFrameModel.frameKey(0, "Demo", "main", "()V"),
-                "Demo.main() line 1", 1, 0,
-                false, false, true, null, locals);
-    }
+    // ---------- heap order ----------
 
-    private static MemorySnapshot snap(Map<Long, HeapObjectModel> heap, List<StackFrameModel> frames,
-            List<StaticsClassModel> statics) {
-        return new MemorySnapshot("target", "thread-1", "main", 1L, frames, heap, statics);
-    }
-
-    private static List<Long> longs(long... expected) {
-        List<Long> out = new ArrayList<>();
-        for (long id : expected) {
-            out.add(Long.valueOf(id));
-        }
-        return out;
-    }
-
-    // ---------- tests ----------
     @Test
-    void testDeterministicOrder() {
-        // roots: A(1), D(4); A -> B(2) -> C(3): single column in BFS discovery order
-        MemorySnapshot s = snap(heap(node(1, 2), node(2, 3), node(3), node(4)),
-                List.of(frameWithRoots(1, 4)), List.of());
-        List<Long> order = HeapLayouter.assign(s, List.of(), new LayoutMemory());
-        assertEquals(longs(1, 4, 2, 3), order,
-                "order: roots in variable order first, then BFS discovery of children");
-        // same snapshot, fresh memory => identical layout
-        List<Long> order2 = HeapLayouter.assign(s, List.of(), new LayoutMemory());
-        assertEquals(order, order2, "order: deterministic across runs with fresh memory");
+    void testOrderFollowsDiagramBoxOrder() {
+        // Boxes A, B, C added in that order => that is the column order.
+        MemoryDiagramBuilder b = builder();
+        box(b, "A");
+        box(b, "B");
+        box(b, "C");
+        List<String> order = HeapLayouter.assign(b.build(), List.of(), new LayoutMemory());
+        assertEquals(List.of("A", "B", "C"), order,
+                "order: heap column follows the diagram's box order");
     }
 
     @Test
-    void testFramesBeforeStaticsRootOrder() {
-        // frame root A(1); statics root S(9); frame roots enqueued first
-        StaticsClassModel statics = new StaticsClassModel("app.S", "S",
-                List.of(new FieldModel("s", "app.S", "T", ref(9))), 0);
-        MemorySnapshot s = snap(heap(node(9), node(1)), List.of(frameWithRoots(1)), List.of(statics));
-        List<Long> order = HeapLayouter.assign(s, List.of(), new LayoutMemory());
-        assertEquals(longs(1, 9), order, "order: frame roots ordered before statics roots");
+    void testOrderDeterministicWithFreshMemory() {
+        MemoryDiagramBuilder b1 = builder();
+        box(b1, "A");
+        box(b1, "B");
+        box(b1, "C");
+        List<String> order1 = HeapLayouter.assign(b1.build(), List.of(), new LayoutMemory());
+
+        MemoryDiagramBuilder b2 = builder();
+        box(b2, "A");
+        box(b2, "B");
+        box(b2, "C");
+        List<String> order2 = HeapLayouter.assign(b2.build(), List.of(), new LayoutMemory());
+
+        assertEquals(order1, order2, "order: deterministic across runs with fresh memory");
     }
 
-    @Test
-    void testDeepChainDiscoveryOrder() {
-        // chain 1 -> 2 -> ... -> 9: every object appears, in reference order
-        HeapObjectModel[] chain = new HeapObjectModel[9];
-        for (int i = 1; i <= 9; i++) {
-            chain[i - 1] = i < 9 ? node(i, i + 1) : node(i);
-        }
-        MemorySnapshot s = snap(heap(chain), List.of(frameWithRoots(1)), List.of());
-        List<Long> order = HeapLayouter.assign(s, List.of(), new LayoutMemory());
-        assertEquals(longs(1, 2, 3, 4, 5, 6, 7, 8, 9), order,
-                "order: deep chains stack in discovery order, nothing dropped");
-    }
+    // ---------- sticky slot stability ----------
 
     @Test
-    void testUnreachableSeededDeterministically() {
-        // root A(1); unreachable cluster U(50) -> V(51), in heap map order after A
-        MemorySnapshot s = snap(heap(node(1), node(50, 51), node(51)),
-                List.of(frameWithRoots(1)), List.of());
-        List<Long> order = HeapLayouter.assign(s, List.of(), new LayoutMemory());
-        assertEquals(longs(1, 50, 51), order,
-                "unreachable: seeded in heap order after reachables, children following");
-    }
-
-    @Test
-    void testSlotStabilityAcrossReassign() {
+    void testSlotStabilityAcrossReorderingRebuild() {
         LayoutMemory memory = new LayoutMemory();
-        // step 1: root -> A(1) -> B(2)
-        MemorySnapshot s1 = snap(heap(node(1, 2), node(2)), List.of(frameWithRoots(1)), List.of());
-        List<Long> order1 = HeapLayouter.assign(s1, List.of(), memory);
-        assertEquals(longs(1, 2), order1, "stability: initial layout");
 
-        // step 2: references invert (root -> B(2) -> A(1)) and a new root C(3) appears.
-        // Discovery order changes, but A and B keep their remembered positions; C appends.
-        MemorySnapshot s2 = snap(heap(node(2, 1), node(1), node(3)),
-                List.of(frameWithRoots(2, 3)), List.of());
-        List<Long> order2 = HeapLayouter.assign(s2, List.of(), memory);
-        assertEquals(longs(1, 2, 3), order2,
-                "stability: existing ids keep position despite discovery-order swap; new id appends");
-        assertEquals(Long.valueOf(0), memory.orderKeyOf(1), "stability: A orderKey verbatim");
-        assertEquals(Long.valueOf(1), memory.orderKeyOf(2), "stability: B orderKey verbatim");
-        Long keyC = memory.orderKeyOf(3);
-        assertTrue(keyC != null && keyC.longValue() > memory.orderKeyOf(2).longValue(),
-                "stability: new id sorts after every existing box");
+        // step 1: diagram order A, B.
+        MemoryDiagramBuilder b1 = builder();
+        box(b1, "A");
+        box(b1, "B");
+        List<String> order1 = HeapLayouter.assign(b1.build(), List.of(), memory);
+        assertEquals(List.of("A", "B"), order1, "stability: initial column order");
+        Long keyA = memory.orderKeyOf("A");
+        Long keyB = memory.orderKeyOf("B");
+
+        // step 2: the diagram reorders the heap to B, A. Remembered tokens keep their earlier slots,
+        // so the rendered column is unchanged (A before B) despite the diagram's swap.
+        MemoryDiagramBuilder b2 = builder();
+        box(b2, "B");
+        box(b2, "A");
+        List<String> order2 = HeapLayouter.assign(b2.build(), List.of(), memory);
+        assertEquals(List.of("A", "B"), order2,
+                "stability: remembered tokens keep their slots despite diagram reordering");
+        assertEquals(keyA, memory.orderKeyOf("A"), "stability: A orderKey retained verbatim");
+        assertEquals(keyB, memory.orderKeyOf("B"), "stability: B orderKey retained verbatim");
     }
+
+    @Test
+    void testNewBoxAppendsAfterExisting() {
+        LayoutMemory memory = new LayoutMemory();
+
+        MemoryDiagramBuilder b1 = builder();
+        box(b1, "A");
+        box(b1, "B");
+        HeapLayouter.assign(b1.build(), List.of(), memory);
+
+        // step 2: a NEW box C appears (diagram lists it first) — it must append after A and B.
+        MemoryDiagramBuilder b2 = builder();
+        box(b2, "C");
+        box(b2, "A");
+        box(b2, "B");
+        List<String> order = HeapLayouter.assign(b2.build(), List.of(), memory);
+        assertEquals(List.of("A", "B", "C"), order,
+                "append: a new box sorts after every remembered box");
+        assertTrue(memory.orderKeyOf("C").longValue() > memory.orderKeyOf("B").longValue(),
+                "append: new box gets an orderKey after all existing ones");
+    }
+
+    // ---------- ghosts ----------
 
     @Test
     void testGhostKeepsRememberedSlot() {
         LayoutMemory memory = new LayoutMemory();
-        MemorySnapshot s1 = snap(heap(node(1, 2), node(2)), List.of(frameWithRoots(1)), List.of());
-        HeapLayouter.assign(s1, List.of(), memory); // remembers A then B
 
-        // B deleted from the heap but rendered as a ghost: it must stay in its slot.
-        MemorySnapshot s2 = snap(heap(node(1)), List.of(frameWithRoots(1)), List.of());
-        List<Long> order = HeapLayouter.assign(s2, List.of(node(2)), memory);
-        assertEquals(longs(1, 2), order, "ghost: keeps remembered slot");
-        assertEquals(Long.valueOf(1), memory.orderKeyOf(2), "ghost: orderKey retained in memory");
+        MemoryDiagramBuilder b1 = builder();
+        box(b1, "A");
+        box(b1, "B");
+        HeapLayouter.assign(b1.build(), List.of(), memory); // remembers A then B
+        Long keyB = memory.orderKeyOf("B");
+
+        // step 2: B is gone from the heap but rendered as a ghost — it keeps its remembered slot.
+        MemoryDiagramBuilder b2 = builder();
+        box(b2, "A");
+        List<String> order = HeapLayouter.assign(b2.build(), List.of(ghost("B")), memory);
+        assertEquals(List.of("A", "B"), order, "ghost: keeps its remembered slot");
+        assertEquals(keyB, memory.orderKeyOf("B"), "ghost: orderKey retained in memory");
     }
 
     @Test
-    void testGhostNeverSeenAppends() {
+    void testNeverSeenGhostAppends() {
         LayoutMemory memory = new LayoutMemory();
-        MemorySnapshot s = snap(heap(node(1)), List.of(frameWithRoots(1)), List.of());
-        List<Long> order = HeapLayouter.assign(s, List.of(node(99)), memory);
-        assertEquals(longs(1, 99), order, "ghost: never-seen ghost appends after live objects");
+
+        MemoryDiagramBuilder b = builder();
+        box(b, "A");
+        // A ghost never seen before appends after the live boxes.
+        List<String> order = HeapLayouter.assign(b.build(), List.of(ghost("G")), memory);
+        assertEquals(List.of("A", "G"), order, "ghost: a never-seen ghost appends after live boxes");
+        assertTrue(memory.orderKeyOf("G").longValue() > memory.orderKeyOf("A").longValue(),
+                "ghost: never-seen ghost gets an orderKey after the live boxes");
     }
+
+    // ---------- eviction ----------
 
     @Test
-    void testEviction() {
+    void testEvictionDropsAbsentTokens() {
         LayoutMemory memory = new LayoutMemory();
-        MemorySnapshot s1 = snap(heap(node(1, 2), node(2)), List.of(frameWithRoots(1)), List.of());
-        HeapLayouter.assign(s1, List.of(), memory);
-        assertTrue(memory.orderKeyOf(2) != null, "eviction: orderKey exists while live");
 
-        // B gone and not a ghost: evicted from memory and absent from the column.
-        MemorySnapshot s2 = snap(heap(node(1)), List.of(frameWithRoots(1)), List.of());
-        List<Long> order = HeapLayouter.assign(s2, List.of(), memory);
-        assertEquals(longs(1), order, "eviction: evicted id absent from the column");
-        assertTrue(memory.orderKeyOf(2) == null, "eviction: orderKey removed from memory");
+        MemoryDiagramBuilder b1 = builder();
+        box(b1, "A");
+        box(b1, "B");
+        HeapLayouter.assign(b1.build(), List.of(), memory);
+        assertNotNull(memory.orderKeyOf("B"), "eviction: orderKey exists while live");
 
-        // if B reappears later it is assigned fresh (appended), not restored.
-        MemorySnapshot s3 = snap(heap(node(1, 2), node(2)), List.of(frameWithRoots(1)), List.of());
-        List<Long> order3 = HeapLayouter.assign(s3, List.of(), memory);
-        assertEquals(longs(1, 2), order3, "eviction: reappearing id re-assigned by discovery");
-        assertTrue(memory.orderKeyOf(2).longValue() > memory.orderKeyOf(1).longValue(),
-                "eviction: reappearing id gets a fresh orderKey");
+        // step 2: B is absent from both the diagram and the ghosts => evicted and off the column.
+        MemoryDiagramBuilder b2 = builder();
+        box(b2, "A");
+        List<String> order = HeapLayouter.assign(b2.build(), List.of(), memory);
+        assertEquals(List.of("A"), order, "eviction: evicted token absent from the column");
+        assertNull(memory.orderKeyOf("B"), "eviction: orderKey removed from memory");
+
+        // step 3: if B reappears it is assigned fresh (appended), not restored to its old slot.
+        MemoryDiagramBuilder b3 = builder();
+        box(b3, "B");
+        box(b3, "A");
+        List<String> order3 = HeapLayouter.assign(b3.build(), List.of(), memory);
+        assertEquals(List.of("A", "B"), order3, "eviction: reappearing token re-assigned after existing");
+        assertTrue(memory.orderKeyOf("B").longValue() > memory.orderKeyOf("A").longValue(),
+                "eviction: reappearing token gets a fresh orderKey");
     }
+
+    // ---------- LayoutMemory direct ----------
 
     @Test
     void testLayoutMemoryDirect() {
         LayoutMemory memory = new LayoutMemory();
-        memory.assign(1L);
-        memory.assign(2L);
-        assertEquals(Long.valueOf(0), memory.orderKeyOf(1L), "memory: first assignment");
-        assertEquals(Long.valueOf(1), memory.orderKeyOf(2L), "memory: second assignment increments orderKey");
-        memory.assign(1L);
-        assertEquals(Long.valueOf(0), memory.orderKeyOf(1L), "memory: re-assign keeps orderKey verbatim");
-        assertTrue(memory.orderKeyOf(42L) == null, "memory: unknown id has no orderKey");
+        memory.assign("A");
+        memory.assign("B");
+        assertEquals(Long.valueOf(0), memory.orderKeyOf("A"), "memory: first assignment gets orderKey 0");
+        assertEquals(Long.valueOf(1), memory.orderKeyOf("B"), "memory: second assignment increments orderKey");
+        memory.assign("A");
+        assertEquals(Long.valueOf(0), memory.orderKeyOf("A"), "memory: re-assign keeps orderKey verbatim");
+        assertNull(memory.orderKeyOf("Z"), "memory: unknown token has no orderKey");
 
-        Set<Long> live = new HashSet<>();
-        live.add(1L);
-        memory.retainAll(live);
-        assertTrue(memory.orderKeyOf(2L) == null && memory.orderKeyOf(1L) != null,
-                "memory: retainAll evicts dead ids");
+        memory.retainAll(Set.of("A"));
+        assertNull(memory.orderKeyOf("B"), "memory: retainAll evicts absent tokens");
+        assertNotNull(memory.orderKeyOf("A"), "memory: retainAll keeps live tokens");
 
         memory.clear();
-        assertTrue(memory.orderKeyOf(1L) == null, "memory: clear drops orderKeys");
-        memory.assign(9L);
-        assertEquals(Long.valueOf(0), memory.orderKeyOf(9L), "memory: clear resets orderKey counter");
+        assertNull(memory.orderKeyOf("A"), "memory: clear drops orderKeys");
+        memory.assign("C");
+        assertEquals(Long.valueOf(0), memory.orderKeyOf("C"), "memory: clear resets the orderKey counter");
     }
 }

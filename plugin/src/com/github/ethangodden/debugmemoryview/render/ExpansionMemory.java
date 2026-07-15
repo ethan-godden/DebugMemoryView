@@ -14,7 +14,7 @@ import java.util.Set;
 public final class ExpansionMemory {
 
     private final Set<String> collapsedFrames = new HashSet<>();
-    private final Set<Long> collapsedObjects = new HashSet<>();
+    private final Set<String> collapsedObjects = new HashSet<>();
     private final Set<String> collapsedStaticClasses = new HashSet<>();
     private final Map<String, Integer> capOverrides = new HashMap<>();
 
@@ -26,12 +26,12 @@ public final class ExpansionMemory {
         toggle(collapsedFrames, frameKey, collapsed);
     }
 
-    public boolean isObjectCollapsed(long id) {
-        return collapsedObjects.contains(Long.valueOf(id));
+    public boolean isObjectCollapsed(String token) {
+        return collapsedObjects.contains(token);
     }
 
-    public void setObjectCollapsed(long id, boolean collapsed) {
-        toggle(collapsedObjects, Long.valueOf(id), collapsed);
+    public void setObjectCollapsed(String token, boolean collapsed) {
+        toggle(collapsedObjects, token, collapsed);
     }
 
     public boolean isStaticClassCollapsed(String className) {

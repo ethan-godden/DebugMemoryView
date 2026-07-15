@@ -33,7 +33,7 @@ import com.github.ethangodden.debugmemoryview.core.DebugContextTracker;
 import com.github.ethangodden.debugmemoryview.core.ExtractionLimits;
 import com.github.ethangodden.debugmemoryview.core.ISnapshotConsumer;
 import com.github.ethangodden.debugmemoryview.core.SnapshotPipeline;
-import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 import com.github.ethangodden.debugmemoryview.render.DiagramController;
 
@@ -69,8 +69,8 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
 
     // Pinned = the displayed diagram is frozen; newer snapshots are cached only.
     private boolean pinned;
-    private MemorySnapshot displayed;
-    private MemorySnapshot pendingSnapshot;
+    private MemoryDiagram displayed;
+    private MemoryDiagram pendingSnapshot;
     private MemoryDiff pendingDiff;
 
     @Override
@@ -160,31 +160,31 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
     // ---- ISnapshotConsumer (UI thread) --------------------------------------
 
     @Override
-    public void snapshotReady(MemorySnapshot snapshot, MemoryDiff diff) {
+    public void snapshotReady(MemoryDiagram diagram, MemoryDiff diff) {
         if (isGone()) {
             return;
         }
         if (pinned) {
-            pendingSnapshot = snapshot;
+            pendingSnapshot = diagram;
             pendingDiff = diff;
             // The pinned thread re-suspended: drop the "Running…" veil that
             // threadResumed() painted, while keeping the frozen diagram on screen.
-            if (displayed != null && snapshot.threadKey().equals(displayed.threadKey())) {
+            if (displayed != null && diagram.threadToken().equals(displayed.threadToken())) {
                 controller.setRunning(false);
             }
             return;
         }
-        display(snapshot, diff);
+        display(diagram, diff);
     }
 
     @Override
-    public void threadResumed(String threadKey) {
+    public void threadResumed(String threadToken) {
         if (isGone()) {
             return;
         }
         // Resumes are broadcast for every previously-extracted thread; only the
         // one whose snapshot is on screen grays the diagram.
-        if (displayed != null && displayed.threadKey().equals(threadKey)) {
+        if (displayed != null && displayed.threadToken().equals(threadToken)) {
             controller.setRunning(true);
         }
     }
@@ -212,10 +212,10 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         pageBook.showPage(placeholder);
     }
 
-    private void display(MemorySnapshot snapshot, MemoryDiff diff) {
-        displayed = snapshot;
+    private void display(MemoryDiagram diagram, MemoryDiff diff) {
+        displayed = diagram;
         controller.setRunning(false);
-        controller.setSnapshot(snapshot, diff);
+        controller.setSnapshot(diagram, diff != null ? diff : MemoryDiff.initial(diagram));
         pageBook.showPage(canvas);
     }
 
@@ -247,11 +247,11 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
             public void run() {
                 pinned = isChecked();
                 if (!pinned && pendingSnapshot != null) {
-                    MemorySnapshot snapshot = pendingSnapshot;
+                    MemoryDiagram diagram = pendingSnapshot;
                     MemoryDiff diff = pendingDiff;
                     pendingSnapshot = null;
                     pendingDiff = null;
-                    display(snapshot, diff);
+                    display(diagram, diff);
                 }
             }
         };

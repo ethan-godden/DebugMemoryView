@@ -68,25 +68,33 @@ with `runtime-EclipseApplication/` as the runtime workspace, debug a small Java 
 
 ## Architecture
 
-Data flows one way:
+Data flows one way. The model is **platform-agnostic**: the Eclipse/JDT extractor feeds a
+`MemoryDiagramBuilder` and the diff/render layers read only the neutral `MemoryDiagram`, so a
+future editor/language frontend needs only a new builder-feeding adapter.
 
 ```
-DebugContextTracker → SnapshotPipeline → SnapshotExtractor → MemorySnapshot
-        (listeners)      (debounced Job)        (JDI walk)      (immutable)
-                                                                    │
-MemoryDiagramView ← DiagramController ← MemoryDiff ← DiffEngine ←──┘
+DebugContextTracker → SnapshotPipeline → SnapshotExtractor → MemoryDiagramBuilder → MemoryDiagram
+        (listeners)      (debounced Job)   (JDI walk, adapter)     (ingestion)         (immutable)
+                                                                                            │
+MemoryDiagramView ← DiagramController ← MemoryDiff ← DiffEngine ←────────────────────────────┘
       (ViewPart)      (Draw2d figures)     (per-thread baseline diff)
 ```
 
 Packages below sit under the root `com.github.ethangodden.debugmemoryview`.
 
-- `model` — immutable records only (snapshot, frames, variables,
-  heap objects, values). `model.diff` computes `MemoryDiff` from two snapshots;
-  ghosts carry full models copied from the previous snapshot.
+- `model` — immutable, JDK-only neutral records + the `MemoryDiagramBuilder` (sole ingestion
+  point). A `MemoryDiagram` is STACK `Frame`s + HEAP `Box`es (statics classes are HEAP boxes); a
+  `Box` is a uniform header + ordered `Variable` fields (arrays/strings/boxed/enums are all fields,
+  with `explored`/`omittedCount` hints). Identity is an opaque token (box/frame token, variable/field
+  symbol id) — never a JVM id. A `Value` is `Primitive | Reference` (or `null` = the absent/null
+  value); a `Reference(section, index)` addresses a cell (an index into a section's rows) and resolves
+  to a `Box` or to nothing (a **dangling pointer**). `model.diff` computes `MemoryDiff` from two
+  diagrams; ghosts carry full models copied from the previous diagram, with their references remapped
+  into the current diagram's coordinates.
 - `core` — `DebugContextTracker` (debug-context + debug-event
   listeners), `SnapshotPipeline` (debounce, per-thread baselines, suspend
-  generations, publish gating), `core.extract.SnapshotExtractor` (the JDI walk;
-  stub-first BFS with caps from `ExtractionLimits`).
+  generations, publish gating), `core.extract.SnapshotExtractor` (the JDI walk, now the JDT→builder
+  adapter that feeds `MemoryDiagramBuilder`; stub-first BFS with caps from `ExtractionLimits`).
 - `render` — pure layout (`HeapLayouter` + sticky `LayoutMemory`),
   theming (`ColorPalette`, `FontKit`), figures (`render.figures`), bezier
   connection routing/clipping, hover/reveal, `ExpansionMemory` (cap overrides).
@@ -99,15 +107,16 @@ Packages below sit under the root `com.github.ethangodden.debugmemoryview`.
   Every JDI wire call happens inside `SnapshotPipeline`'s Job on a worker
   thread (`SnapshotExtractor` does the walk) — never on the UI or debug event
   dispatch thread. Trigger methods capture debug-model references only.
-- **No SWT/Draw2d/JFace in `model` or `core.extract` models.** `model` and
-  `HeapLayouter`/`LayoutMemory` stay JDK-only so those test suites need no runtime.
-- Snapshots and diffs are immutable; renderers must treat a `MemoryDiff` as
+- **No SWT/Draw2d/JFace in `model` or `core.extract` models.** `model` (neutral records + builder)
+  and `HeapLayouter`/`LayoutMemory` stay JDK-only so those test suites need no runtime.
+- Diagrams and diffs are immutable; renderers must treat a `MemoryDiff` as
   transient per render and never accumulate ghosts.
 - Consumers are called only on the SWT UI thread (`Display.asyncExec`), gated
-  by a sequence check so superseded snapshots are never displayed.
-- Reference values compare by target id (`DiffEngine.valueEquals`):
+  by a sequence check so superseded diagrams are never displayed.
+- Reference values compare by **resolved target token** (`DiffEngine.valueEquals`):
   retargeting an arrow is the change; a target's mutation shows on the target
-  box, not on every inbound arrow. Two `UnreadableValue`s are always equal.
+  box, not on every inbound arrow. Two dangling references are equal, and two unreadable values
+  (both mapped to `Primitive("?")`) are equal.
 
 ## Conventions
 

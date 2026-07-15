@@ -3,7 +3,6 @@ package com.github.ethangodden.debugmemoryview.render.figures;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.commons.lang3.StringUtils;
 import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.LineBorder;
@@ -11,31 +10,28 @@ import org.eclipse.draw2d.MarginBorder;
 import org.eclipse.draw2d.PositionConstants;
 import org.eclipse.draw2d.ToolbarLayout;
 
-import com.github.ethangodden.debugmemoryview.model.FieldModel;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
-import com.github.ethangodden.debugmemoryview.model.ValueModel;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.ArrayObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.BoxedObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.EnumObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.FieldsObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.StringObject;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel.StubObject;
+import com.github.ethangodden.debugmemoryview.model.Box;
+import com.github.ethangodden.debugmemoryview.model.Value;
+import com.github.ethangodden.debugmemoryview.model.Variable;
 import com.github.ethangodden.debugmemoryview.render.ColorPalette;
 import com.github.ethangodden.debugmemoryview.render.Ellipsis;
 import com.github.ethangodden.debugmemoryview.render.FontKit;
 
 /**
- * Tooltip body for a reference row: "Type #id" header plus the first few
- * content lines of the target object. Built lazily on first hover from the
- * cached snapshot — lets the user read what an arrow points to without
- * scrolling the heap pane.
+ * Tooltip body for a reference row: the target box's header line plus the first
+ * few of its field/element/char lines. Built lazily on first hover from the
+ * cached diagram — lets the user read what an arrow points to without scrolling
+ * the heap pane. Uniform over the neutral {@link Box}: each field renders
+ * "identifier = value", box-only fields (enum constant marker, value==null,
+ * no type) render just their identifier, and an unexplored box shows a single
+ * "(not explored)" line.
  */
 public class ObjectPreviewFigure extends Figure {
 
     private static final int MAX_LINES = 5;
     private static final int MAX_LINE_CHARS = 80;
 
-    public ObjectPreviewFigure(HeapObjectModel model, ColorPalette palette, FontKit fonts) {
+    public ObjectPreviewFigure(Box box, ColorPalette palette, FontKit fonts) {
         ToolbarLayout layout = new ToolbarLayout(false);
         layout.setStretchMinorAxis(true);
         setLayoutManager(layout);
@@ -43,7 +39,7 @@ public class ObjectPreviewFigure extends Figure {
         setBackgroundColor(palette.boxBackground());
         setBorder(new LineBorder(palette.boxBorder(), 1));
 
-        Label header = new Label(model.simpleName() + " #" + model.id());
+        Label header = new Label(box.header());
         header.setLabelAlignment(PositionConstants.LEFT);
         header.setFont(fonts.header());
         header.setForegroundColor(palette.textForeground());
@@ -51,7 +47,7 @@ public class ObjectPreviewFigure extends Figure {
         add(header);
 
         List<String> lines = new ArrayList<>();
-        int omitted = collectLines(model, lines);
+        int omitted = collectLines(box, lines);
         for (String line : lines) {
             add(bodyLine(line, palette, fonts));
         }
@@ -63,43 +59,27 @@ public class ObjectPreviewFigure extends Figure {
     }
 
     /** Fills up to MAX_LINES display lines; returns how many content lines were omitted. */
-    private static int collectLines(HeapObjectModel model, List<String> lines) {
-        return switch (model) {
-            case StringObject str -> {
-                lines.add("\"" + StringUtils.abbreviate(str.displayText(), Ellipsis.ELLIPSIS, MAX_LINE_CHARS + 1)
-                        + (str.textTruncated() ? Ellipsis.ELLIPSIS : "") + "\"");
-                yield 0;
-            }
-            case BoxedObject box -> {
-                String value = box.displayText() != null ? box.displayText() : "?";
-                lines.add(value + (box.jvmCached() ? "  (JVM cache)" : ""));
-                yield 0;
-            }
-            case StubObject stub -> {
-                lines.add("(not explored)");
-                yield 0;
-            }
-            case ArrayObject arr -> {
-                lines.add("length = " + arr.arrayLength());
-                int shown = Math.min(arr.elements().size(), MAX_LINES - 1);
-                for (int i = 0; i < shown; i++) {
-                    ValueModel element = arr.elements().get(i);
-                    lines.add("[" + i + "] = " + Ellipsis.valueText(element, MAX_LINE_CHARS));
-                }
-                yield arr.elements().size() + arr.elementsOmitted() - shown;
-            }
-            case FieldsObject fields -> {
-                if (fields instanceof EnumObject en && en.enumConstantName() != null) {
-                    lines.add(en.enumConstantName());
-                }
-                int shown = Math.min(fields.fields().size(), MAX_LINES - lines.size());
-                for (int i = 0; i < shown; i++) {
-                    FieldModel field = fields.fields().get(i);
-                    lines.add(field.name() + " = " + Ellipsis.valueText(field.value(), MAX_LINE_CHARS));
-                }
-                yield fields.fields().size() + fields.fieldsOmitted() - shown;
-            }
-        };
+    private static int collectLines(Box box, List<String> lines) {
+        if (!box.explored()) {
+            lines.add("(not explored)");
+            return 0;
+        }
+        List<Variable> fields = box.fields();
+        int shown = Math.min(fields.size(), MAX_LINES);
+        for (int i = 0; i < shown; i++) {
+            Variable field = fields.get(i);
+            lines.add(lineOf(field));
+        }
+        return fields.size() + box.omittedCount() - shown;
+    }
+
+    /** "identifier = value", or just the identifier for a box-only field (enum constant marker). */
+    private static String lineOf(Variable field) {
+        Value value = field.value();
+        if (value == null && field.typeLabel() == null) {
+            return field.identifier(); // box-only content row (enum constant name)
+        }
+        return field.identifier() + " = " + Ellipsis.valueText(value, MAX_LINE_CHARS);
     }
 
     private static Label bodyLine(String text, ColorPalette palette, FontKit fonts) {

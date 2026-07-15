@@ -61,7 +61,7 @@ public final class HoverController {
      */
     void hookRow(VariableRowFigure row) {
         row.addMouseMotionListener(motionListener);
-        if (row.targetId() != null) {
+        if (row.targetToken() != null) {
             row.addMouseListener(clickListener);
             row.setCursor(Cursors.HAND);
         }
@@ -81,8 +81,8 @@ public final class HoverController {
             currentConnection.setHover(true, palette);
             controller.raiseConnection(currentConnection); // paint over sibling arrows
         }
-        if (row.targetId() != null) {
-            currentTarget = controller.objectFigureFor(row.targetId().longValue());
+        if (row.targetToken() != null) {
+            currentTarget = controller.objectFigureFor(row.targetToken());
             if (currentTarget != null) {
                 currentTarget.setHoverHighlight(true);
             }

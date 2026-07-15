@@ -2,11 +2,8 @@ package com.github.ethangodden.debugmemoryview.render;
 
 import org.apache.commons.lang3.StringUtils;
 
-import com.github.ethangodden.debugmemoryview.model.HeapReference;
-import com.github.ethangodden.debugmemoryview.model.NullValue;
-import com.github.ethangodden.debugmemoryview.model.PrimitiveValue;
-import com.github.ethangodden.debugmemoryview.model.UnreadableValue;
-import com.github.ethangodden.debugmemoryview.model.ValueModel;
+import com.github.ethangodden.debugmemoryview.model.Primitive;
+import com.github.ethangodden.debugmemoryview.model.Value;
 
 /** Text truncation and row-text composition helpers. */
 public final class Ellipsis {
@@ -16,19 +13,23 @@ public final class Ellipsis {
     private Ellipsis() {
     }
 
-    /** Display text of a value, char-capped. References render as "#id" (the arrow carries the rest). */
-    public static String valueText(ValueModel value, int maxChars) {
+    /**
+     * Display text of a value, char-capped. A {@link Primitive} renders its string; a reference
+     * renders "→" (the arrow carries the target) and the absent/null value renders "null".
+     */
+    public static String valueText(Value value, int maxChars) {
         // abbreviate's width includes the marker, so maxChars + 1 keeps "maxChars chars + …".
         return StringUtils.abbreviate(fullValueText(value), ELLIPSIS, maxChars + 1);
     }
 
-    /** Untruncated display text of a value (tooltips). */
-    public static String fullValueText(ValueModel value) {
-        return switch (value) {
-            case PrimitiveValue primitive -> primitive.text();
-            case NullValue nullValue -> "null";
-            case HeapReference ref -> "#" + ref.targetId();
-            case UnreadableValue unreadable -> "<unreadable>";
-        };
+    /** Untruncated display text of a value (tooltips / previews). */
+    public static String fullValueText(Value value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof Primitive primitive) {
+            return primitive.value();
+        }
+        return "→"; // Reference: the arrow carries the target
     }
 }

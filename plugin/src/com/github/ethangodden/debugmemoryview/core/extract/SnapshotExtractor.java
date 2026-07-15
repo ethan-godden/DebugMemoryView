@@ -2,10 +2,11 @@ package com.github.ethangodden.debugmemoryview.core.extract;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -27,28 +28,26 @@ import org.eclipse.jdt.debug.core.IJavaValue;
 import org.eclipse.jdt.debug.core.IJavaVariable;
 
 import com.github.ethangodden.debugmemoryview.core.ExtractionLimits;
-import com.github.ethangodden.debugmemoryview.model.FieldModel;
-import com.github.ethangodden.debugmemoryview.model.HeapObjectModel;
-import com.github.ethangodden.debugmemoryview.model.HeapReference;
-import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
-import com.github.ethangodden.debugmemoryview.model.NullValue;
-import com.github.ethangodden.debugmemoryview.model.PrimitiveValue;
-import com.github.ethangodden.debugmemoryview.model.StackFrameModel;
-import com.github.ethangodden.debugmemoryview.model.StaticsClassModel;
-import com.github.ethangodden.debugmemoryview.model.UnreadableValue;
-import com.github.ethangodden.debugmemoryview.model.ValueModel;
-import com.github.ethangodden.debugmemoryview.model.VariableModel;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
+import com.github.ethangodden.debugmemoryview.model.MemoryDiagramBuilder;
+import com.github.ethangodden.debugmemoryview.model.Primitive;
+import com.github.ethangodden.debugmemoryview.model.Value;
+import com.github.ethangodden.debugmemoryview.model.Variable;
 
 /**
- * Walks a suspended thread and produces one immutable {@link MemorySnapshot}.
- * This is the ONLY class in the plugin that makes JDI wire calls; it must run on
- * a Jobs-framework worker thread, never on the UI or debug event dispatch thread.
- * One instance per extraction run.
+ * Walks a suspended thread and produces one immutable {@link MemoryDiagram} by driving a
+ * {@link MemoryDiagramBuilder}. This is the ONLY class in the plugin that makes JDI wire calls; it
+ * must run on a Jobs-framework worker thread, never on the UI or debug event dispatch thread. One
+ * instance per extraction run.
  *
- * Failure handling is layered: a per-value read failure degrades to
- * {@link UnreadableValue}; a per-object failure leaves the already-inserted stub
- * node in place (arrows stay valid); a per-frame failure yields an obsolete-style
- * placeholder frame; an unusable thread/target aborts the whole snapshot with
+ * <p>The JDI walk is unchanged in shape from the old model-building extractor — frames (this +
+ * locals), statics, and a stub-first BFS over the heap with caps from {@link ExtractionLimits} — but
+ * every production point now emits neutral {@link com.github.ethangodden.debugmemoryview.model.Box}es
+ * and {@link Variable} rows through the builder instead of language-shaped model records.
+ *
+ * <p>Failure handling is layered: a per-value read failure degrades to {@code Primitive("?")}; a
+ * per-object failure leaves the already-reserved stub box in place (arrows stay valid); a per-frame
+ * failure yields a body-only placeholder frame; an unusable thread/target aborts the whole walk with
  * {@link OperationCanceledException}.
  */
 public final class SnapshotExtractor {
@@ -87,9 +86,11 @@ public final class SnapshotExtractor {
     private IJavaThread thread;
     private IDebugTarget target;
 
-    // BFS state: stub-first insertion keeps every HeapReference resolvable and
-    // makes aliasing/cycles structural. LinkedHashMap iteration order = BFS order.
-    private final LinkedHashMap<Long, HeapObjectModel> heap = new LinkedHashMap<>();
+    // The builder is the sole sink; it owns box slot order (first-mention). We keep our own
+    // reservedBoxes set to mirror the old "heap.get(id) == null" stub-first bookkeeping so we
+    // reserve each box exactly once and only enqueue it for exploration on first encounter.
+    private MemoryDiagramBuilder builder;
+    private final Set<Long> reservedBoxes = new HashSet<>();
     private final ArrayDeque<Pending> queue = new ArrayDeque<>();
     private final LinkedHashMap<String, IJavaReferenceType> staticsTypes = new LinkedHashMap<>();
     private int admitted;       // enqueued for exploration; counts toward maxObjects
@@ -100,8 +101,8 @@ public final class SnapshotExtractor {
         this.sequence = sequence;
     }
 
-    public MemorySnapshot extract(IJavaThread javaThread,
-            String debugTargetKey, String threadKey) throws DebugException {
+    public MemoryDiagram extract(IJavaThread javaThread,
+            String debugTargetToken, String threadToken) throws DebugException {
         this.thread = javaThread;
         this.target = javaThread.getDebugTarget();
         abortIfUnusable();
@@ -114,26 +115,41 @@ public final class SnapshotExtractor {
             threadName = "?"; //$NON-NLS-1$
         }
 
+        this.builder = new MemoryDiagramBuilder(debugTargetToken, threadToken, threadName, sequence);
+
         IStackFrame[] raw = javaThread.getStackFrames(); // one wire call, top frame first
-        List<StackFrameModel> frames = new ArrayList<>(raw.length);
+
+        // Discover the statics classes (from non-obsolete frames) BEFORE any value conversion so we
+        // can reserve their heap boxes first — this keeps statics at the top of the heap column even
+        // though frame-variable references reserve object stubs during frame extraction.
+        for (IStackFrame frame : raw) {
+            IJavaStackFrame javaFrame = (IJavaStackFrame) frame;
+            if (!readOr(javaFrame::isObsolete, Boolean.TRUE).booleanValue()) {
+                registerStaticsType(javaFrame);
+            }
+        }
+        for (String className : staticsTypes.keySet()) {
+            builder.reserveBox(staticsBoxToken(className), staticsHeader(className));
+        }
+
+        // Frames render top-of-stack first; depthFromBottom numbers from the bottom.
         for (int i = 0; i < raw.length; i++) {
             checkCanceled();
             IJavaStackFrame frame = (IJavaStackFrame) raw[i];
-            frames.add(extractFrame(frame, raw.length - 1 - i));
+            extractFrame(frame, raw.length - 1 - i);
         }
 
-        // Statics are BFS roots too (depth 0); seed them before draining the queue.
-        List<StaticsClassModel> statics = extractStatics();
+        // Fill the statics boxes (their slots were reserved above) BEFORE draining regular objects.
+        // Statics are BFS roots (depth 0); their field values reserve object stubs after the statics.
+        fillStatics();
         drainHeapQueue();
 
-        return new MemorySnapshot(debugTargetKey, threadKey, threadName, sequence,
-                List.copyOf(frames),
-                Collections.unmodifiableMap(heap), statics);
+        return builder.build();
     }
 
     // ---- stack -----------------------------------------------------------
 
-    private StackFrameModel extractFrame(IJavaStackFrame frame, int depthFromBottom) {
+    private void extractFrame(IJavaStackFrame frame, int depthFromBottom) {
         boolean obsolete = readOr(frame::isObsolete, Boolean.TRUE).booleanValue();
         String typeName = readOr(frame::getDeclaringTypeName, "<unknown>"); //$NON-NLS-1$
         String methodName = readOr(frame::getMethodName, "<unknown>"); //$NON-NLS-1$
@@ -141,54 +157,61 @@ public final class SnapshotExtractor {
         int lineNumber = readOr(frame::getLineNumber, Integer.valueOf(-1)).intValue();
         boolean nativeFrame = readOr(frame::isNative, Boolean.FALSE).booleanValue();
         boolean staticMethod = readOr(frame::isStatic, Boolean.FALSE).booleanValue();
-        String frameKey = StackFrameModel.frameKey(depthFromBottom, typeName, methodName, signature);
-        String label = buildLabel(typeName, methodName, lineNumber);
+        String frameToken = frameKey(depthFromBottom, typeName, methodName, signature);
+        String header = buildLabel(typeName, methodName, lineNumber);
 
         if (!obsolete) {
-            registerStaticsType(frame);
             try {
-                return completeFrame(frame, frameKey, typeName, label,
-                        lineNumber, depthFromBottom, nativeFrame, staticMethod);
+                completeFrame(frame, frameToken, typeName, header, nativeFrame, staticMethod);
+                return;
             } catch (DebugException e) {
-                // Per-frame degradation (incl. ERR_INVALID_STACK_FRAME): placeholder, snapshot survives.
+                // Per-frame degradation (incl. ERR_INVALID_STACK_FRAME): body-only placeholder, walk survives.
                 abortIfUnusable();
+                builder.pushFrame(frameToken, header, shortMessage(e));
+                return;
             }
         }
-        return new StackFrameModel(frameKey, label, lineNumber,
-                depthFromBottom, true, nativeFrame, false, null, List.of());
+        builder.pushFrame(frameToken, header, "(obsolete method)"); //$NON-NLS-1$
     }
 
-    private StackFrameModel completeFrame(IJavaStackFrame frame, String frameKey, String typeName,
-            String label, int lineNumber, int depthFromBottom,
-            boolean nativeFrame, boolean staticMethod) throws DebugException {
+    private void completeFrame(IJavaStackFrame frame, String frameToken, String typeName,
+            String header, boolean nativeFrame, boolean staticMethod) throws DebugException {
 
-        VariableModel thisVariable = null;
+        List<Variable> variables = new ArrayList<>();
+
+        Variable thisVariable = null;
         try {
             IJavaObject self = frame.getThis(); // null for static/native frames
             if (self != null) {
-                thisVariable = new VariableModel("this", typeName, convert(self, 0)); //$NON-NLS-1$
+                thisVariable = new Variable("this", "this", typeName, convert(self, 0)); //$NON-NLS-1$ //$NON-NLS-2$
             }
         } catch (DebugException e) {
-            String message = shortMessage(e);
             abortIfUnusable();
             if (!staticMethod && !nativeFrame) {
-                thisVariable = new VariableModel("this", typeName, new UnreadableValue(message)); //$NON-NLS-1$
+                thisVariable = new Variable("this", "this", typeName, new Primitive("?")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             }
+        }
+        if (thisVariable != null) {
+            variables.add(thisVariable);
         }
 
         IJavaVariable[] rawLocals = frame.getLocalVariables(); // slot/declaration order
-        boolean localsAvailable = frame.wereLocalsAvailable(); // valid only after the retrieval above
-        List<VariableModel> locals = new ArrayList<>(rawLocals.length);
         for (IJavaVariable variable : rawLocals) {
             String name = readOr(variable::getName, null);
             if (name == null) {
                 continue;
             }
-            locals.add(new VariableModel(name, declaredTypeName(variable), valueOf(variable, 0)));
+            // A local's symbolId is its name (the receiver already used "this").
+            variables.add(new Variable(name, name, declaredTypeName(variable), valueOf(variable, 0)));
         }
-        return new StackFrameModel(frameKey, label, lineNumber,
-                depthFromBottom, false, nativeFrame, localsAvailable, thisVariable,
-                List.copyOf(locals));
+
+        if (variables.isEmpty()) {
+            // No receiver and no locals: a body-only placeholder, as the old model rendered.
+            builder.pushFrame(frameToken, header,
+                    nativeFrame ? "(native method)" : "(no variables)"); //$NON-NLS-1$ //$NON-NLS-2$
+            return;
+        }
+        builder.pushFrame(frameToken, header, List.copyOf(variables));
     }
 
     private static String buildLabel(String typeName, String methodName, int lineNumber) {
@@ -202,14 +225,14 @@ public final class SnapshotExtractor {
 
     // ---- values ----------------------------------------------------------
 
-    /** Converts a value, registering any referenced object in the heap (stub first). */
-    private ValueModel convert(IJavaValue value, int depth) {
+    /** Converts a value, reserving any referenced object's box (stub first). */
+    private Value convert(IJavaValue value, int depth) {
         try {
             if (value == null || value.isNull()) {
-                return NullValue.INSTANCE;
+                return null; // absent/null value
             }
             if (value instanceof IJavaPrimitiveValue) {
-                return new PrimitiveValue(value.getReferenceTypeName(), value.getValueString());
+                return new Primitive(value.getValueString());
             }
             if (value instanceof IJavaArray array) {
                 return reference(array, depth);
@@ -217,42 +240,40 @@ public final class SnapshotExtractor {
             if (value instanceof IJavaObject object) {
                 String signature = object.getSignature();
                 if (STRING_SIGNATURE.equals(signature) && limits.inlineStrings()) {
-                    // Escape hatch: no heap node, quoted text inline.
-                    return new PrimitiveValue("java.lang.String", quotedString(object)); //$NON-NLS-1$
+                    // Escape hatch: no heap box, quoted text inline.
+                    return new Primitive(quotedString(object));
                 }
                 String wrapper = BOXED_BY_SIGNATURE.get(signature);
                 if (wrapper != null && limits.inlineBoxed()) {
-                    return new PrimitiveValue(wrapper, boxedText(object));
+                    return new Primitive(boxedText(object));
                 }
                 return reference(object, depth);
             }
-            return new PrimitiveValue("?", value.getValueString()); // JDI void and friends //$NON-NLS-1$
+            return new Primitive(value.getValueString()); // JDI void and friends
         } catch (DebugException e) {
-            String message = shortMessage(e);
             abortIfUnusable();
-            return new UnreadableValue(message);
+            return new Primitive("?"); //$NON-NLS-1$
         }
     }
 
-    private ValueModel reference(IJavaObject object, int depth) throws DebugException {
+    private Value reference(IJavaObject object, int depth) throws DebugException {
         long id = object.getUniqueId();
         if (id == -1) {
-            // Collected between value fetch and id fetch: no node.
+            // Collected between value fetch and id fetch: no box.
             abortIfUnusable();
-            return new UnreadableValue("<collected>"); //$NON-NLS-1$
+            return new Primitive("?"); //$NON-NLS-1$
         }
-        HeapObjectModel existing = heap.get(id);
-        String typeName = existing != null ? existing.typeName() : typeNameOf(object);
-        if (existing == null) {
-            // STUB first: every HeapReference has a target node, aliasing stays
-            // correct past the caps, and cycles terminate trivially.
-            heap.put(id, HeapObjectModel.stub(id, typeName, simpleName(typeName)));
+        if (reservedBoxes.add(id)) {
+            // STUB first: every reference has a target box, aliasing stays correct past the
+            // caps, and cycles terminate trivially. reserveBox claims the box's slot.
+            String typeName = typeNameOf(object);
+            builder.reserveBox(boxToken(id), simpleName(typeName) + " #" + id); //$NON-NLS-1$
             if (depth < limits.maxDepth() && admitted < limits.maxObjects()) {
                 admitted++;
                 queue.add(new Pending(object, id, depth, typeName));
             }
         }
-        return new HeapReference(id, typeName);
+        return builder.reference(boxToken(id));
     }
 
     // ---- heap ------------------------------------------------------------
@@ -261,70 +282,86 @@ public final class SnapshotExtractor {
         Pending pending;
         while ((pending = queue.poll()) != null) {
             checkCanceled();
-            HeapObjectModel node = buildNode(pending);
-            if (node != null) {
-                heap.put(pending.id(), node); // replaces the stub in place, keeps BFS order
-            }
+            buildNode(pending); // fills the reserved box in place, keeping BFS slot order
         }
     }
 
-    private HeapObjectModel buildNode(Pending pending) {
+    private void buildNode(Pending pending) {
         String simple = simpleName(pending.typeName());
         try {
             if (pending.object() instanceof IJavaArray array) {
-                return buildArray(array, pending, simple);
+                buildArray(array, pending, simple);
+                return;
             }
             String signature = pending.object().getSignature();
             if (STRING_SIGNATURE.equals(signature)) {
-                return buildString(pending.object(), pending.id());
+                buildString(pending.object(), pending.id(), simple);
+                return;
             }
             String wrapper = BOXED_BY_SIGNATURE.get(signature);
             if (wrapper != null) {
-                return buildBoxed(pending.object(), pending.id(), wrapper);
+                buildBoxed(pending.object(), pending.id(), wrapper);
+                return;
             }
-            return buildPlainOrEnum(pending, simple);
+            buildPlainOrEnum(pending, simple);
         } catch (DebugException e) {
-            // Per-object degradation: the stub stays, so inbound arrows remain valid.
+            // Per-object degradation: the reserved stub box stays, so inbound arrows remain valid.
             abortIfUnusable();
-            return null;
         }
     }
 
-    private HeapObjectModel buildArray(IJavaArray array, Pending pending, String simple)
+    private void buildArray(IJavaArray array, Pending pending, String simple)
             throws DebugException {
         int length = array.getLength();
         int shown = Math.min(length, limits.maxArrayElements());
-        List<ValueModel> elements = new ArrayList<>(shown);
+        String componentType = componentTypeName(pending.typeName());
+        List<Variable> fields = new ArrayList<>(shown);
         if (length <= limits.maxArrayElements()) {
             IJavaValue[] values = array.getValues(); // one JDWP round trip for the whole array
-            for (IJavaValue value : values) {
-                elements.add(convert(value, pending.depth() + 1));
+            for (int i = 0; i < values.length; i++) {
+                fields.add(arrayElement(i, componentType, convert(values[i], pending.depth() + 1)));
             }
         } else {
             // Bounded per-index reads; never materialize a huge array wholesale.
             for (int i = 0; i < shown; i++) {
                 checkCanceled();
-                ValueModel element;
+                Value element;
                 try {
                     element = convert(array.getValue(i), pending.depth() + 1);
                 } catch (DebugException e) {
-                    String message = shortMessage(e);
                     abortIfUnusable();
-                    element = new UnreadableValue(message);
+                    element = new Primitive("?"); //$NON-NLS-1$
                 }
-                elements.add(element);
+                fields.add(arrayElement(i, componentType, element));
             }
         }
-        return HeapObjectModel.array(pending.id(), pending.typeName(), simple, length,
-                List.copyOf(elements), length - shown);
+        // Header: componentBase + "[" + length + "] #" + id.
+        String header = componentBase(pending.typeName()) + "[" + length + "] #" + pending.id(); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.fillBox(boxToken(pending.id()), header, List.copyOf(fields), true, length - shown);
     }
 
-    private HeapObjectModel buildString(IJavaObject object, long id) throws DebugException {
+    /** An array element row: positional identifier, component type in the type label. */
+    private static Variable arrayElement(int index, String componentType, Value value) {
+        String idx = Integer.toString(index);
+        return new Variable(idx, idx, componentType, value);
+    }
+
+    private void buildString(IJavaObject object, long id, String simple) throws DebugException {
+        String header = simple + " #" + id; //$NON-NLS-1$
         CappedText capped = readCappedString(object);
         if (capped == null) {
-            return HeapObjectModel.string(id, "", true); // too large to pull over the wire //$NON-NLS-1$
+            // Too large to pull over the wire: no characters, single omitted marker.
+            builder.fillBox(boxToken(id), header, List.of(), true, 1);
+            return;
         }
-        return HeapObjectModel.string(id, capped.text(), capped.truncated());
+        String text = capped.text();
+        List<Variable> fields = new ArrayList<>(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            String idx = Integer.toString(i);
+            // One field per char: identifier is the index, value is the character text.
+            fields.add(new Variable(idx, idx, "char", new Primitive(String.valueOf(text.charAt(i))))); //$NON-NLS-1$
+        }
+        builder.fillBox(boxToken(id), header, List.copyOf(fields), true, capped.truncated() ? 1 : 0);
     }
 
     /** Capped raw contents of a String plus whether the cap bit, or null if too large to pull over the wire. */
@@ -342,11 +379,17 @@ public final class SnapshotExtractor {
 
     private record CappedText(String text, boolean truncated) {}
 
-    private HeapObjectModel buildBoxed(IJavaObject object, long id, String wrapperTypeName)
+    private void buildBoxed(IJavaObject object, long id, String wrapperTypeName)
             throws DebugException {
         IJavaValue inner = boxedInner(object);
-        return HeapObjectModel.boxed(id, wrapperTypeName, simpleName(wrapperTypeName), boxedText(inner),
-                isJvmCached(wrapperTypeName, inner));
+        String text = boxedText(inner);
+        if (isJvmCached(wrapperTypeName, inner)) {
+            text = text + " (JVM cache)"; //$NON-NLS-1$
+        }
+        String header = simpleName(wrapperTypeName) + " #" + id; //$NON-NLS-1$
+        // A boxed primitive is a single field carrying the (possibly cache-annotated) display value.
+        Variable field = new Variable("value", "value", wrapperTypeName, new Primitive(text)); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.fillBox(boxToken(id), header, List.of(field), true, 0);
     }
 
     /** Spec-defined valueOf caches: Integer/Short/Byte/Long in [-128,127], Character in [0,127], Boolean always. */
@@ -367,7 +410,7 @@ public final class SnapshotExtractor {
         };
     }
 
-    private HeapObjectModel buildPlainOrEnum(Pending pending, String simple) throws DebugException {
+    private void buildPlainOrEnum(Pending pending, String simple) throws DebugException {
         IJavaObject object = pending.object();
         boolean isEnum = false;
         try {
@@ -377,7 +420,7 @@ public final class SnapshotExtractor {
         }
 
         IVariable[] variables = object.getVariables(); // allFields(): instance+static+inherited, JDT-sorted
-        List<FieldModel> fields = new ArrayList<>();
+        List<Variable> fields = new ArrayList<>();
         int omitted = 0;
         String enumConstantName = null;
         for (IVariable raw : variables) {
@@ -411,14 +454,21 @@ public final class SnapshotExtractor {
                 omitted++;
                 continue;
             }
-            fields.add(toFieldModel(variable, name, pending.depth() + 1));
+            fields.add(toFieldVariable(variable, name, pending.depth() + 1));
         }
-        if (isEnum) {
-            return HeapObjectModel.enumConstant(pending.id(), pending.typeName(), simple,
-                    List.copyOf(fields), omitted, enumConstantName);
+
+        String header = simple + " #" + pending.id(); //$NON-NLS-1$
+        List<Variable> boxFields;
+        if (isEnum && enumConstantName != null) {
+            // A synthetic leading box-only field: identifier is the constant name, value absent.
+            boxFields = new ArrayList<>(fields.size() + 1);
+            // typeLabel is null (not "") so the renderer recognizes this as a box-only row.
+            boxFields.add(new Variable("\0enumConstant", enumConstantName, null, null)); //$NON-NLS-1$
+            boxFields.addAll(fields);
+        } else {
+            boxFields = fields;
         }
-        return HeapObjectModel.plain(pending.id(), pending.typeName(), simple, List.copyOf(fields),
-                omitted);
+        builder.fillBox(boxToken(pending.id()), header, List.copyOf(boxFields), true, omitted);
     }
 
     private static boolean isEnumBaseField(IJavaVariable variable) {
@@ -433,7 +483,7 @@ public final class SnapshotExtractor {
         return false;
     }
 
-    private FieldModel toFieldModel(IJavaVariable variable, String name, int depth) {
+    private Variable toFieldVariable(IJavaVariable variable, String name, int depth) {
         String declaringTypeName = "?"; //$NON-NLS-1$
         if (variable instanceof IJavaFieldVariable field) {
             IJavaType declaring = field.getDeclaringType(); // local getter, no wire call
@@ -441,8 +491,9 @@ public final class SnapshotExtractor {
                 declaringTypeName = readOr(declaring::getName, "?"); //$NON-NLS-1$
             }
         }
-        return new FieldModel(name, declaringTypeName, declaredTypeName(variable),
-                valueOf(variable, depth));
+        // Field symbolId = declaringTypeName + "." + name (disambiguates shadowed fields).
+        return new Variable(declaringTypeName + "." + name, name, //$NON-NLS-1$
+                declaredTypeName(variable), valueOf(variable, depth));
     }
 
     // ---- statics ---------------------------------------------------------
@@ -458,13 +509,12 @@ public final class SnapshotExtractor {
         }
     }
 
-    private List<StaticsClassModel> extractStatics() {
-        List<StaticsClassModel> statics = new ArrayList<>(staticsTypes.size());
+    private void fillStatics() {
         for (Map.Entry<String, IJavaReferenceType> entry : staticsTypes.entrySet()) {
             checkCanceled();
             String className = entry.getKey();
             IJavaReferenceType type = entry.getValue();
-            List<FieldModel> fields = new ArrayList<>();
+            List<Variable> fields = new ArrayList<>();
             int omitted = 0;
             try {
                 // Declared fields only: inherited statics show under their own class
@@ -496,30 +546,45 @@ public final class SnapshotExtractor {
                         omitted++;
                         continue;
                     }
-                    // Statics are BFS roots (depth 0).
-                    fields.add(new FieldModel(name, className, declaredTypeName(field),
-                            valueOf(field, 0)));
+                    // Statics field symbolId = fieldKey (className + "." + name); statics are BFS roots (depth 0).
+                    fields.add(new Variable(className + "." + name, name, //$NON-NLS-1$
+                            declaredTypeName(field), valueOf(field, 0)));
                 }
             } catch (DebugException e) {
                 abortIfUnusable();
             }
-            if (!fields.isEmpty()) {
-                statics.add(new StaticsClassModel(className, simpleName(className),
-                        List.copyOf(fields), omitted));
-            }
+            // The box slot was reserved in extract(); fill it (even when empty) so it holds its
+            // top-of-column position. An empty statics box carries no fields.
+            builder.fillBox(staticsBoxToken(className), staticsHeader(className),
+                    List.copyOf(fields), true, omitted);
         }
-        return List.copyOf(statics);
+    }
+
+    private static String staticsBoxToken(String className) {
+        return "statics:" + className; //$NON-NLS-1$
+    }
+
+    private static String staticsHeader(String className) {
+        return "Class " + simpleName(className); //$NON-NLS-1$
     }
 
     // ---- helpers ---------------------------------------------------------
 
-    private ValueModel valueOf(IJavaVariable variable, int depth) {
+    private static String boxToken(long id) {
+        return Long.toString(id);
+    }
+
+    /** Frame diff identity: numbered from the stack BOTTOM so surviving frames keep their tokens. */
+    static String frameKey(int depthFromBottom, String declaringTypeName, String methodName, String signature) {
+        return depthFromBottom + "|" + declaringTypeName + "." + methodName + signature; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    private Value valueOf(IJavaVariable variable, int depth) {
         try {
             return convert((IJavaValue) variable.getValue(), depth);
         } catch (DebugException e) {
-            String message = shortMessage(e);
             abortIfUnusable();
-            return new UnreadableValue(message);
+            return new Primitive("?"); //$NON-NLS-1$
         }
     }
 
@@ -549,6 +614,23 @@ public final class SnapshotExtractor {
         } catch (DebugException e) {
             return "?"; //$NON-NLS-1$
         }
+    }
+
+    /** The declared type of an array, minus one dimension (its element/component type). */
+    private static String componentTypeName(String arrayTypeName) {
+        if (arrayTypeName != null && arrayTypeName.endsWith("[]")) { //$NON-NLS-1$
+            return arrayTypeName.substring(0, arrayTypeName.length() - 2);
+        }
+        return arrayTypeName == null ? "?" : arrayTypeName; //$NON-NLS-1$
+    }
+
+    /** The innermost (dimension-stripped) base of an array type, for the "base[len]" header. */
+    private static String componentBase(String arrayTypeName) {
+        String base = arrayTypeName == null ? "?" : arrayTypeName; //$NON-NLS-1$
+        while (base.endsWith("[]")) { //$NON-NLS-1$
+            base = base.substring(0, base.length() - 2);
+        }
+        return simpleName(base);
     }
 
     private String quotedString(IJavaObject object) throws DebugException {
