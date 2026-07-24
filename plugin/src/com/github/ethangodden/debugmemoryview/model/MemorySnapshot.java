@@ -1,4 +1,3 @@
-
 package com.github.ethangodden.debugmemoryview.model;
 
 import java.util.ArrayList;
@@ -14,10 +13,10 @@ import java.util.Optional;
  * extraction job and the UI thread.
  *
  * <p>
- * A {@link Value.Reference} is opaque: only this snapshot's {@link Builder} can
- * mint one, and {@link #resolve} is the only way through one, so how targets
- * are addressed never leaves this file. A reference whose target is absent from
- * the snapshot resolves empty &mdash; that is what "dangling" means.
+ * A {@link Value.Reference} is opaque: only a {@link Builder} can mint one, and
+ * {@link #resolve} is the only way through one, so how targets are addressed
+ * never leaves this file. A reference whose target is absent from the snapshot
+ * resolves empty — that is what "dangling" means.
  */
 public final class MemorySnapshot {
 	private final String targetId;
@@ -33,27 +32,25 @@ public final class MemorySnapshot {
 	}
 
 	/**
-	 * @param targetId identifies the debug session this snapshot came from. It is
-	 *                 baked into every minted reference token, so resolving a
-	 *                 reference against a snapshot of a different target is a clean
-	 *                 miss (dangling) rather than a chance JDI-id collision.
+	 * Starts a snapshot of the debug session {@code targetId}. The id is baked into
+	 * every minted reference token, so resolving a reference against another
+	 * target's snapshot is a clean miss (dangling), never a chance id collision.
 	 */
 	public static Builder builder(String targetId) {
 		return new Builder(targetId);
 	}
 
-	/**
-	 * @return {@link String} that identifies the debug session. See comment above
-	 *         {@link MemorySnapshot#builder(String)} for why its needed
-	 */
+	/** The debug session this snapshot came from; see {@link #builder(String)}. */
 	public String targetId() {
 		return targetId;
 	}
 
+	/** The suspended threads, in the order the frontend supplied them. */
 	public List<DisplayableThread> threads() {
 		return threads;
 	}
 
+	/** Every heap struct (statics classes included), in discovery order. */
 	public List<DisplayableStruct> heap() {
 		return heap;
 	}
@@ -69,7 +66,6 @@ public final class MemorySnapshot {
 	 */
 	public sealed interface Value {
 
-		/** Self-contained display text: "42", "\"hi\"", "?" for unreadable. */
 		record Primitive(String value) implements Value {}
 
 		/**
@@ -97,7 +93,8 @@ public final class MemorySnapshot {
 
 	/**
 	 * One row in a frame or struct. A null {@code value} means the variable holds
-	 * null.
+	 * null; a row with {@code type} and {@code value} both null is display-only
+	 * content (e.g. an enum constant name).
 	 */
 	public record DisplayableVariable(String label, String type, Value value) {}
 
@@ -114,8 +111,8 @@ public final class MemorySnapshot {
 	}
 
 	/**
-	 * Every heap box: object, array ("[0]"&hellip; labels), string,
-	 * statics-of-a-class.
+	 * Every heap struct: object, array (positional "0", "1", … labels), string,
+	 * or the statics of a class.
 	 */
 	public record DisplayableStruct(
 			String id,
@@ -131,7 +128,8 @@ public final class MemorySnapshot {
 	}
 
 	/**
-	 * {@code note != null} marks a body-only frame ("(native method)", &hellip;).
+	 * One stack entry. A non-null {@code note} ("(native method)", …) is shown in
+	 * place of the variable rows.
 	 */
 	public record DisplayableFrame(
 			String id,
@@ -145,9 +143,10 @@ public final class MemorySnapshot {
 	}
 
 	/**
-	 * {@code state} is a frontend-supplied display label ("running", "waiting",
-	 * &hellip;); {@code contendedOn} (nullable) is the struct whose monitor this
-	 * thread is stuck waiting to acquire.
+	 * One call stack, {@code frames} top-of-stack first. {@code state} is a
+	 * frontend-supplied display label ("running", "waiting", …);
+	 * {@code contendedOn} (nullable) is the struct whose monitor this thread is
+	 * stuck waiting to acquire.
 	 */
 	public record DisplayableThread(
 			String id,
@@ -161,7 +160,7 @@ public final class MemorySnapshot {
 		}
 	}
 
-	/** The single ingestion point &mdash; and the only minter of References. */
+	/** The single ingestion point — and the only minter of References. */
 	public static final class Builder {
 		private final String targetId;
 		private final List<DisplayableThread> threads = new ArrayList<>();
@@ -172,14 +171,16 @@ public final class MemorySnapshot {
 		}
 
 		/**
-		 * Mint a handle; pure &mdash; a target nobody ever reserves is simply dangling.
+		 * Mints a handle to {@code structId}. Pure — it claims no discovery slot, and
+		 * a target nobody ever provides is simply dangling.
 		 */
 		public Value.Reference reference(String structId) {
 			return new Value.Reference(token(structId));
 		}
 
 		/**
-		 * Stub-first: claims id's place in discovery order; {@link #fill} replaces it.
+		 * Claims {@code id}'s place in discovery order with an unexplored stub;
+		 * {@link #fill} replaces it. A no-op if the id was already provided.
 		 */
 		public Builder reserve(String id, String type) {
 			heap.putIfAbsent(token(id), new DisplayableStruct(id, type, List.of(), false, 0, null));
@@ -192,11 +193,13 @@ public final class MemorySnapshot {
 			return this;
 		}
 
+		/** Appends a thread; threads keep this call order. */
 		public Builder thread(DisplayableThread thread) {
 			threads.add(thread);
 			return this;
 		}
 
+		/** Freezes the accumulated threads and heap into an immutable snapshot. */
 		public MemorySnapshot build() {
 			return new MemorySnapshot(this);
 		}
