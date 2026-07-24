@@ -5,239 +5,264 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
-import com.github.ethangodden.debugmemoryview.model.Box;
-import com.github.ethangodden.debugmemoryview.model.Frame;
-import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
-import com.github.ethangodden.debugmemoryview.model.Primitive;
-import com.github.ethangodden.debugmemoryview.model.Reference;
-import com.github.ethangodden.debugmemoryview.model.Section;
-import com.github.ethangodden.debugmemoryview.model.Value;
-import com.github.ethangodden.debugmemoryview.model.Variable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableFrame;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableThread;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableVariable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 
 /**
- * Computes a {@link MemoryDiff} between two consecutive {@link MemoryDiagram}s on the same thread.
- * Identity is by opaque token: frames by frame token, variables by symbol id within a frame, boxes by
- * box token, fields by symbol id within a box. A box that is unexplored on either side is never
- * claimed as changed. References compare by RESOLVED TARGET TOKEN — retargeting is the change on the
- * referring slot; a target's own mutation shows on the target box. Two dangling references compare
- * equal; two unreadable values (both {@link Primitive}{@code ("?")}) compare equal.
+ * Computes a {@link MemoryDiff} between two consecutive {@link MemorySnapshot}s on the same thread.
+ * Identity is by opaque token: frames by frame id, variables by row key within a frame, structs by
+ * struct id, fields by row key within a struct. A struct that is unexplored on either side is never
+ * claimed as changed. References compare by RESOLVED TARGET — retargeting is the change on the
+ * referring row; a target's own mutation shows on the target struct. Two dangling references compare
+ * equal; two unreadable values (both {@code Primitive("?")}) compare equal.
  */
 public final class DiffEngine {
 
     private DiffEngine() {
     }
 
-    public static MemoryDiff diff(MemoryDiagram prev, MemoryDiagram curr) {
-        if (prev == null || !prev.threadToken().equals(curr.threadToken())) {
+    /**
+     * @param prevSequence the extraction sequence {@code prev} was produced under (the snapshot
+     *                     itself no longer carries one); ignored when {@code prev} is null.
+     */
+    public static MemoryDiff diff(MemorySnapshot prev, long prevSequence, MemorySnapshot curr) {
+        if (prev == null || !threadIds(prev).equals(threadIds(curr))) {
             return MemoryDiff.initial(curr);
         }
         Map<String, ChangeStatus> frameStatus = new HashMap<>();
         Map<String, ChangeStatus> variableStatus = new HashMap<>();
-        List<Frame> deletedFrames = new ArrayList<>();
-        Map<String, List<Variable>> deletedVariables = new HashMap<>();
+        List<DisplayableFrame> deletedFrames = new ArrayList<>();
+        Map<String, List<DisplayableVariable>> deletedVariables = new HashMap<>();
         diffFrames(prev, curr, frameStatus, variableStatus, deletedFrames, deletedVariables);
 
         Map<String, ChangeStatus> boxStatus = new HashMap<>();
         Map<String, Map<String, ChangeStatus>> fieldStatus = new HashMap<>();
-        List<Box> deletedBoxes = new ArrayList<>();
+        List<DisplayableStruct> deletedBoxes = new ArrayList<>();
         diffHeap(prev, curr, boxStatus, fieldStatus, deletedBoxes);
 
-        // Ghosts are copied verbatim from the PREVIOUS diagram and still carry ITS cell coordinates.
-        // Remap their references into the CURRENT diagram's coordinates so a deleted box's arrow points
-        // at its surviving target's current cell — never at an unrelated box that now occupies the old
-        // slot — and renders empty (no arrow) when the target is gone too.
-        Map<String, Integer> currSlotByToken = new HashMap<>();
-        for (Map.Entry<Integer, Box> e : curr.heapBySlot().entrySet()) {
-            currSlotByToken.put(e.getValue().boxToken(), e.getKey());
+        // Ghosts are copied verbatim from the PREVIOUS snapshot. Reference tokens are stable across
+        // snapshots of one target, so a ghost's live reference already resolves against the CURRENT
+        // snapshot with no coordinate remap; only a reference whose target is gone (or that was
+        // already dangling) is rewritten to the absent value, so a deleted item's row renders an
+        // empty cell (no arrow) rather than a wrong-box arrow or a dangling glyph.
+        List<DisplayableFrame> ghostFrames = new ArrayList<>(deletedFrames.size());
+        for (DisplayableFrame f : deletedFrames) {
+            ghostFrames.add(ghostFrame(f, prev, curr));
         }
-        List<Frame> ghostFrames = new ArrayList<>(deletedFrames.size());
-        for (Frame f : deletedFrames) {
-            ghostFrames.add(remapFrame(f, prev, currSlotByToken));
+        Map<String, List<DisplayableVariable>> ghostVars = new HashMap<>();
+        for (Map.Entry<String, List<DisplayableVariable>> e : deletedVariables.entrySet()) {
+            ghostVars.put(e.getKey(), ghostVariables(e.getValue(), prev, curr));
         }
-        Map<String, List<Variable>> ghostVars = new HashMap<>();
-        for (Map.Entry<String, List<Variable>> e : deletedVariables.entrySet()) {
-            ghostVars.put(e.getKey(), remapVariables(e.getValue(), prev, currSlotByToken));
-        }
-        List<Box> ghostBoxes = new ArrayList<>(deletedBoxes.size());
-        for (Box b : deletedBoxes) {
-            ghostBoxes.add(remapBox(b, prev, currSlotByToken));
+        List<DisplayableStruct> ghostBoxes = new ArrayList<>(deletedBoxes.size());
+        for (DisplayableStruct s : deletedBoxes) {
+            ghostBoxes.add(ghostStruct(s, prev, curr));
         }
 
-        return new MemoryDiff(prev.sequence(), Map.copyOf(frameStatus), Map.copyOf(variableStatus),
+        return new MemoryDiff(prevSequence, Map.copyOf(frameStatus), Map.copyOf(variableStatus),
                 Map.copyOf(boxStatus), Map.copyOf(fieldStatus), List.copyOf(ghostFrames),
                 Map.copyOf(ghostVars), List.copyOf(ghostBoxes));
     }
 
-    /** Rewrites a ghost reference from the previous diagram's cell to the target's current cell, or to
-     * an absent value (no arrow) when the target no longer exists. Non-references are returned as-is. */
-    private static Value remapGhostValue(Value v, MemoryDiagram prev, Map<String, Integer> currSlotByToken) {
-        if (!(v instanceof Reference ref)) {
-            return v;
+    private static List<String> threadIds(MemorySnapshot s) {
+        List<String> ids = new ArrayList<>(s.threads().size());
+        for (DisplayableThread t : s.threads()) {
+            ids.add(t.id());
         }
-        Optional<Box> target = prev.resolve(ref);
-        if (target.isPresent()) {
-            Integer slot = currSlotByToken.get(target.get().boxToken());
-            if (slot != null) {
-                return new Reference(Section.HEAP, slot);
-            }
-        }
-        return null;
+        return ids;
     }
 
-    private static List<Variable> remapVariables(List<Variable> vars, MemoryDiagram prev,
-            Map<String, Integer> currSlotByToken) {
-        List<Variable> out = new ArrayList<>(vars.size());
-        for (Variable v : vars) {
-            out.add(new Variable(v.symbolId(), v.identifier(), v.typeLabel(),
-                    remapGhostValue(v.value(), prev, currSlotByToken)));
+    /** All frames of a snapshot, across threads, in thread then stack order (top-of-stack first). */
+    private static List<DisplayableFrame> allFrames(MemorySnapshot s) {
+        List<DisplayableFrame> frames = new ArrayList<>();
+        for (DisplayableThread t : s.threads()) {
+            frames.addAll(t.frames());
+        }
+        return frames;
+    }
+
+    /** A ghost reference survives only if it resolved in prev AND its target still exists in curr;
+     * otherwise it becomes the absent value (empty cell, no arrow). Non-references pass through. */
+    private static Value ghostValue(Value v, MemorySnapshot prev, MemorySnapshot curr) {
+        if (!(v instanceof Value.Reference ref)) {
+            return v;
+        }
+        if (prev.resolve(ref).isEmpty() || curr.resolve(ref).isEmpty()) {
+            return null;
+        }
+        return ref;
+    }
+
+    private static List<DisplayableVariable> ghostVariables(List<DisplayableVariable> vars,
+            MemorySnapshot prev, MemorySnapshot curr) {
+        List<DisplayableVariable> out = new ArrayList<>(vars.size());
+        for (DisplayableVariable v : vars) {
+            out.add(new DisplayableVariable(v.label(), v.type(), ghostValue(v.value(), prev, curr)));
         }
         return out;
     }
 
-    private static Box remapBox(Box b, MemoryDiagram prev, Map<String, Integer> currSlotByToken) {
-        return new Box(b.boxToken(), b.header(), remapVariables(b.fields(), prev, currSlotByToken),
-                b.explored(), b.omittedCount());
+    private static DisplayableStruct ghostStruct(DisplayableStruct s, MemorySnapshot prev, MemorySnapshot curr) {
+        return new DisplayableStruct(s.id(), s.type(), ghostVariables(s.variables(), prev, curr),
+                s.explored(), s.omitted(), s.monitor());
     }
 
-    private static Frame remapFrame(Frame f, MemoryDiagram prev, Map<String, Integer> currSlotByToken) {
-        if (f.hasBody()) {
+    private static DisplayableFrame ghostFrame(DisplayableFrame f, MemorySnapshot prev, MemorySnapshot curr) {
+        if (f.note() != null) {
             return f;
         }
-        return Frame.withVariables(f.frameToken(), f.header(),
-                remapVariables(f.variables(), prev, currSlotByToken));
+        return new DisplayableFrame(f.id(), f.label(), ghostVariables(f.variables(), prev, curr), null);
     }
 
-    private static void diffFrames(MemoryDiagram prev, MemoryDiagram curr,
+    private static void diffFrames(MemorySnapshot prev, MemorySnapshot curr,
             Map<String, ChangeStatus> frameStatus, Map<String, ChangeStatus> variableStatus,
-            List<Frame> deletedFrames, Map<String, List<Variable>> deletedVariables) {
+            List<DisplayableFrame> deletedFrames, Map<String, List<DisplayableVariable>> deletedVariables) {
 
-        Map<String, Frame> prevByToken = new LinkedHashMap<>();
-        for (Frame f : prev.frames()) {
-            prevByToken.put(f.frameToken(), f);
+        Map<String, DisplayableFrame> prevById = new LinkedHashMap<>();
+        for (DisplayableFrame f : allFrames(prev)) {
+            prevById.put(f.id(), f);
         }
 
-        for (Frame f : curr.frames()) {
-            Frame old = prevByToken.remove(f.frameToken());
+        for (DisplayableFrame f : allFrames(curr)) {
+            DisplayableFrame old = prevById.remove(f.id());
+            List<String> keys = MemoryDiff.rowKeys(f.variables());
             if (old == null) {
-                frameStatus.put(f.frameToken(), ChangeStatus.NEW);
-                for (Variable v : f.variables()) {
-                    variableStatus.put(MemoryDiff.variableKey(f.frameToken(), v.symbolId()), ChangeStatus.NEW);
+                frameStatus.put(f.id(), ChangeStatus.NEW);
+                for (String key : keys) {
+                    variableStatus.put(MemoryDiff.variableKey(f.id(), key), ChangeStatus.NEW);
                 }
                 continue;
             }
-            Map<String, Variable> oldVars = new LinkedHashMap<>();
-            for (Variable v : old.variables()) {
-                oldVars.put(v.symbolId(), v);
+            Map<String, DisplayableVariable> oldVars = new LinkedHashMap<>();
+            List<String> oldKeys = MemoryDiff.rowKeys(old.variables());
+            for (int i = 0; i < oldKeys.size(); i++) {
+                oldVars.put(oldKeys.get(i), old.variables().get(i));
             }
-            // The header carries the line number and any body string, so a step within the same frame
-            // (same token) reads as a header change here.
-            boolean changed = !equalText(f.header(), old.header()) || !equalText(f.body(), old.body());
-            for (Variable v : f.variables()) {
-                Variable oldVar = oldVars.remove(v.symbolId());
+            // The label carries the line number and the note any body string, so a step within the
+            // same frame (same id) reads as a label change here.
+            boolean changed = !equalText(f.label(), old.label()) || !equalText(f.note(), old.note());
+            for (int i = 0; i < keys.size(); i++) {
+                DisplayableVariable v = f.variables().get(i);
+                DisplayableVariable oldVar = oldVars.remove(keys.get(i));
                 ChangeStatus status = oldVar == null ? ChangeStatus.NEW
                         : valueEquals(v.value(), oldVar.value(), curr, prev) ? ChangeStatus.UNCHANGED
                                 : ChangeStatus.CHANGED;
                 if (status != ChangeStatus.UNCHANGED) {
                     changed = true;
                 }
-                variableStatus.put(MemoryDiff.variableKey(f.frameToken(), v.symbolId()), status);
+                variableStatus.put(MemoryDiff.variableKey(f.id(), keys.get(i)), status);
             }
             if (!oldVars.isEmpty()) {
                 changed = true;
-                deletedVariables.put(f.frameToken(), List.copyOf(oldVars.values()));
+                deletedVariables.put(f.id(), List.copyOf(oldVars.values()));
             }
-            frameStatus.put(f.frameToken(), changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED);
+            frameStatus.put(f.id(), changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED);
         }
 
-        for (Frame gone : prevByToken.values()) {
-            frameStatus.put(gone.frameToken(), ChangeStatus.DELETED);
+        for (DisplayableFrame gone : prevById.values()) {
+            frameStatus.put(gone.id(), ChangeStatus.DELETED);
             deletedFrames.add(gone);
         }
     }
 
-    private static void diffHeap(MemoryDiagram prev, MemoryDiagram curr,
+    private static void diffHeap(MemorySnapshot prev, MemorySnapshot curr,
             Map<String, ChangeStatus> boxStatus, Map<String, Map<String, ChangeStatus>> fieldStatus,
-            List<Box> deletedBoxes) {
+            List<DisplayableStruct> deletedBoxes) {
 
-        Map<String, Box> prevByToken = prev.boxByToken();
-        Map<String, Box> currByToken = curr.boxByToken();
+        Map<String, DisplayableStruct> prevById = new LinkedHashMap<>();
+        for (DisplayableStruct s : prev.heap()) {
+            prevById.put(s.id(), s);
+        }
+        Map<String, DisplayableStruct> currById = new LinkedHashMap<>();
+        for (DisplayableStruct s : curr.heap()) {
+            currById.put(s.id(), s);
+        }
 
-        for (Box box : curr.heap()) {
-            Box old = prevByToken.get(box.boxToken());
+        for (DisplayableStruct struct : curr.heap()) {
+            DisplayableStruct old = prevById.get(struct.id());
             if (old == null) {
-                boxStatus.put(box.boxToken(), ChangeStatus.NEW);
+                boxStatus.put(struct.id(), ChangeStatus.NEW);
                 continue;
             }
             // Either side unexplored: contents unknown — never claim a change.
-            if (!box.explored() || !old.explored()) {
-                boxStatus.put(box.boxToken(), ChangeStatus.UNCHANGED);
+            if (!struct.explored() || !old.explored()) {
+                boxStatus.put(struct.id(), ChangeStatus.UNCHANGED);
                 continue;
             }
-            boxStatus.put(box.boxToken(), diffBox(old, box, curr, prev, fieldStatus));
+            boxStatus.put(struct.id(), diffStruct(old, struct, curr, prev, fieldStatus));
         }
 
-        for (Box old : prev.heap()) {
-            if (!currByToken.containsKey(old.boxToken())) {
-                boxStatus.put(old.boxToken(), ChangeStatus.DELETED);
+        for (DisplayableStruct old : prev.heap()) {
+            if (!currById.containsKey(old.id())) {
+                boxStatus.put(old.id(), ChangeStatus.DELETED);
                 deletedBoxes.add(old);
             }
         }
     }
 
-    private static ChangeStatus diffBox(Box old, Box box, MemoryDiagram curr, MemoryDiagram prev,
+    private static ChangeStatus diffStruct(DisplayableStruct old, DisplayableStruct struct,
+            MemorySnapshot curr, MemorySnapshot prev,
             Map<String, Map<String, ChangeStatus>> fieldStatus) {
 
-        // The header carries neutral display info (e.g. an array's length); a change there is a change.
-        boolean changed = !equalText(old.header(), box.header()) || old.omittedCount() != box.omittedCount();
+        // The type carries neutral display info (e.g. an array's length); a change there is a change.
+        boolean changed = !equalText(old.type(), struct.type()) || old.omitted() != struct.omitted()
+                || !Objects.equals(old.monitor(), struct.monitor());
         Map<String, ChangeStatus> byField = new HashMap<>();
-        Map<String, Variable> oldFields = new LinkedHashMap<>();
-        for (Variable f : old.fields()) {
-            oldFields.put(f.symbolId(), f);
+        Map<String, DisplayableVariable> oldFields = new LinkedHashMap<>();
+        List<String> oldKeys = MemoryDiff.rowKeys(old.variables());
+        for (int i = 0; i < oldKeys.size(); i++) {
+            oldFields.put(oldKeys.get(i), old.variables().get(i));
         }
-        for (Variable f : box.fields()) {
-            Variable oldField = oldFields.remove(f.symbolId());
+        List<String> keys = MemoryDiff.rowKeys(struct.variables());
+        for (int i = 0; i < keys.size(); i++) {
+            DisplayableVariable f = struct.variables().get(i);
+            DisplayableVariable oldField = oldFields.remove(keys.get(i));
             ChangeStatus status = oldField == null ? ChangeStatus.NEW
                     : valueEquals(f.value(), oldField.value(), curr, prev) ? ChangeStatus.UNCHANGED
                             : ChangeStatus.CHANGED;
             if (status != ChangeStatus.UNCHANGED) {
                 changed = true;
             }
-            byField.put(f.symbolId(), status);
+            byField.put(keys.get(i), status);
         }
-        // Vanished fields only flag the box CHANGED; there are no ghost rows inside a box.
+        // Vanished fields only flag the struct CHANGED; there are no ghost rows inside a struct.
         if (!oldFields.isEmpty()) {
             changed = true;
         }
         if (!byField.isEmpty()) {
-            fieldStatus.put(box.boxToken(), byField);
+            fieldStatus.put(struct.id(), byField);
         }
         return changed ? ChangeStatus.CHANGED : ChangeStatus.UNCHANGED;
     }
 
     /**
      * Values compare so that: two absent (null) values are equal; two primitives are equal iff their
-     * strings match; two references are equal iff they resolve to the same target box token (both
+     * strings match; two references are equal iff they resolve to the same target struct (both
      * dangling counts as equal); a primitive never equals a reference or absent.
      */
-    static boolean valueEquals(Value a, Value b, MemoryDiagram da, MemoryDiagram db) {
+    static boolean valueEquals(Value a, Value b, MemorySnapshot da, MemorySnapshot db) {
         if (a == null || b == null) {
             return a == b;
         }
-        if (a instanceof Primitive pa) {
-            return b instanceof Primitive pb && pa.value().equals(pb.value());
+        if (a instanceof Value.Primitive pa) {
+            return b instanceof Value.Primitive pb && pa.value().equals(pb.value());
         }
-        if (a instanceof Reference ra) {
-            if (!(b instanceof Reference rb)) {
+        if (a instanceof Value.Reference ra) {
+            if (!(b instanceof Value.Reference rb)) {
                 return false;
             }
-            Optional<Box> ta = da.resolve(ra);
-            Optional<Box> tb = db.resolve(rb);
+            Optional<DisplayableStruct> ta = da.resolve(ra);
+            Optional<DisplayableStruct> tb = db.resolve(rb);
             if (ta.isEmpty() || tb.isEmpty()) {
                 return ta.isEmpty() && tb.isEmpty(); // both dangling -> equal
             }
-            return ta.get().boxToken().equals(tb.get().boxToken());
+            return ta.get().id().equals(tb.get().id());
         }
         return false;
     }

@@ -1,5 +1,6 @@
 package com.github.ethangodden.debugmemoryview.ui;
 
+import java.util.Objects;
 import java.util.function.IntConsumer;
 
 import org.eclipse.debug.ui.DebugUITools;
@@ -33,7 +34,7 @@ import com.github.ethangodden.debugmemoryview.core.DebugContextTracker;
 import com.github.ethangodden.debugmemoryview.core.ExtractionLimits;
 import com.github.ethangodden.debugmemoryview.core.ISnapshotConsumer;
 import com.github.ethangodden.debugmemoryview.core.SnapshotPipeline;
-import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 import com.github.ethangodden.debugmemoryview.render.DiagramController;
 
@@ -69,8 +70,8 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
 
     // Pinned = the displayed diagram is frozen; newer snapshots are cached only.
     private boolean pinned;
-    private MemoryDiagram displayed;
-    private MemoryDiagram pendingSnapshot;
+    private MemorySnapshot displayed;
+    private MemorySnapshot pendingSnapshot;
     private MemoryDiff pendingDiff;
 
     @Override
@@ -160,21 +161,21 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
     // ---- ISnapshotConsumer (UI thread) --------------------------------------
 
     @Override
-    public void snapshotReady(MemoryDiagram diagram, MemoryDiff diff) {
+    public void snapshotReady(MemorySnapshot snapshot, MemoryDiff diff) {
         if (isGone()) {
             return;
         }
         if (pinned) {
-            pendingSnapshot = diagram;
+            pendingSnapshot = snapshot;
             pendingDiff = diff;
             // The pinned thread re-suspended: drop the "Running…" veil that
             // threadResumed() painted, while keeping the frozen diagram on screen.
-            if (displayed != null && diagram.threadToken().equals(displayed.threadToken())) {
+            if (displayed != null && Objects.equals(threadIdOf(snapshot), threadIdOf(displayed))) {
                 controller.setRunning(false);
             }
             return;
         }
-        display(diagram, diff);
+        display(snapshot, diff);
     }
 
     @Override
@@ -184,9 +185,14 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         }
         // Resumes are broadcast for every previously-extracted thread; only the
         // one whose snapshot is on screen grays the diagram.
-        if (displayed != null && displayed.threadToken().equals(threadToken)) {
+        if (displayed != null && Objects.equals(threadIdOf(displayed), threadToken)) {
             controller.setRunning(true);
         }
+    }
+
+    /** The rendered thread's id: a snapshot carries the one suspended thread the pipeline walked. */
+    private static String threadIdOf(MemorySnapshot snapshot) {
+        return snapshot.threads().isEmpty() ? null : snapshot.threads().get(0).id();
     }
 
     @Override
@@ -212,10 +218,10 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         pageBook.showPage(placeholder);
     }
 
-    private void display(MemoryDiagram diagram, MemoryDiff diff) {
-        displayed = diagram;
+    private void display(MemorySnapshot snapshot, MemoryDiff diff) {
+        displayed = snapshot;
         controller.setRunning(false);
-        controller.setSnapshot(diagram, diff != null ? diff : MemoryDiff.initial(diagram));
+        controller.setSnapshot(snapshot, diff != null ? diff : MemoryDiff.initial(snapshot));
         pageBook.showPage(canvas);
     }
 
@@ -247,11 +253,11 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
             public void run() {
                 pinned = isChecked();
                 if (!pinned && pendingSnapshot != null) {
-                    MemoryDiagram diagram = pendingSnapshot;
+                    MemorySnapshot snapshot = pendingSnapshot;
                     MemoryDiff diff = pendingDiff;
                     pendingSnapshot = null;
                     pendingDiff = null;
-                    display(diagram, diff);
+                    display(snapshot, diff);
                 }
             }
         };

@@ -10,28 +10,28 @@ import org.eclipse.draw2d.MarginBorder;
 import org.eclipse.draw2d.PositionConstants;
 import org.eclipse.draw2d.ToolbarLayout;
 
-import com.github.ethangodden.debugmemoryview.model.Box;
-import com.github.ethangodden.debugmemoryview.model.Value;
-import com.github.ethangodden.debugmemoryview.model.Variable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableVariable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 import com.github.ethangodden.debugmemoryview.render.ColorPalette;
 import com.github.ethangodden.debugmemoryview.render.Ellipsis;
 import com.github.ethangodden.debugmemoryview.render.FontKit;
 
 /**
- * Tooltip body for a reference row: the target box's header line plus the first
- * few of its field/element/char lines. Built lazily on first hover from the
- * cached diagram — lets the user read what an arrow points to without scrolling
- * the heap pane. Uniform over the neutral {@link Box}: each field renders
- * "identifier = value", box-only fields (enum constant marker, value==null,
- * no type) render just their identifier, and an unexplored box shows a single
- * "(not explored)" line.
+ * Tooltip body for a reference row: the target struct's header line plus the
+ * first few of its field/element/char lines. Built lazily on first hover from
+ * the cached snapshot — lets the user read what an arrow points to without
+ * scrolling the heap pane. Uniform over the neutral {@link DisplayableStruct}:
+ * each field renders "label = value", box-only fields (enum constant marker,
+ * value==null, no type) render just their label, and an unexplored struct shows
+ * a single "(not explored)" line.
  */
 public class ObjectPreviewFigure extends Figure {
 
     private static final int MAX_LINES = 5;
     private static final int MAX_LINE_CHARS = 80;
 
-    public ObjectPreviewFigure(Box box, ColorPalette palette, FontKit fonts) {
+    public ObjectPreviewFigure(DisplayableStruct struct, ColorPalette palette, FontKit fonts) {
         ToolbarLayout layout = new ToolbarLayout(false);
         layout.setStretchMinorAxis(true);
         setLayoutManager(layout);
@@ -39,7 +39,7 @@ public class ObjectPreviewFigure extends Figure {
         setBackgroundColor(palette.boxBackground());
         setBorder(new LineBorder(palette.boxBorder(), 1));
 
-        Label header = new Label(box.header());
+        Label header = new Label(struct.type());
         header.setLabelAlignment(PositionConstants.LEFT);
         header.setFont(fonts.header());
         header.setForegroundColor(palette.textForeground());
@@ -47,7 +47,7 @@ public class ObjectPreviewFigure extends Figure {
         add(header);
 
         List<String> lines = new ArrayList<>();
-        int omitted = collectLines(box, lines);
+        int omitted = collectLines(struct, lines);
         for (String line : lines) {
             add(bodyLine(line, palette, fonts));
         }
@@ -59,27 +59,27 @@ public class ObjectPreviewFigure extends Figure {
     }
 
     /** Fills up to MAX_LINES display lines; returns how many content lines were omitted. */
-    private static int collectLines(Box box, List<String> lines) {
-        if (!box.explored()) {
+    private static int collectLines(DisplayableStruct struct, List<String> lines) {
+        if (!struct.explored()) {
             lines.add("(not explored)");
             return 0;
         }
-        List<Variable> fields = box.fields();
+        List<DisplayableVariable> fields = struct.variables();
         int shown = Math.min(fields.size(), MAX_LINES);
         for (int i = 0; i < shown; i++) {
-            Variable field = fields.get(i);
+            DisplayableVariable field = fields.get(i);
             lines.add(lineOf(field));
         }
-        return fields.size() + box.omittedCount() - shown;
+        return fields.size() + struct.omitted() - shown;
     }
 
-    /** "identifier = value", or just the identifier for a box-only field (enum constant marker). */
-    private static String lineOf(Variable field) {
+    /** "label = value", or just the label for a box-only field (enum constant marker). */
+    private static String lineOf(DisplayableVariable field) {
         Value value = field.value();
-        if (value == null && field.typeLabel() == null) {
-            return field.identifier(); // box-only content row (enum constant name)
+        if (value == null && field.type() == null) {
+            return field.label(); // box-only content row (enum constant name)
         }
-        return field.identifier() + " = " + Ellipsis.valueText(value, MAX_LINE_CHARS);
+        return field.label() + " = " + Ellipsis.valueText(value, MAX_LINE_CHARS);
     }
 
     private static Label bodyLine(String text, ColorPalette palette, FontKit fonts) {

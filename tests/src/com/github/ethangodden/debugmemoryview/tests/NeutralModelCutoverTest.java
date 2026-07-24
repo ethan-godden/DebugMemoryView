@@ -9,13 +9,12 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import com.github.ethangodden.debugmemoryview.model.Box;
-import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
-import com.github.ethangodden.debugmemoryview.model.MemoryDiagramBuilder;
-import com.github.ethangodden.debugmemoryview.model.Primitive;
-import com.github.ethangodden.debugmemoryview.model.Reference;
-import com.github.ethangodden.debugmemoryview.model.Value;
-import com.github.ethangodden.debugmemoryview.model.Variable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableFrame;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableThread;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableVariable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
 import com.github.ethangodden.debugmemoryview.model.diff.DiffEngine;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
@@ -24,111 +23,126 @@ import com.github.ethangodden.debugmemoryview.render.LayoutMemory;
 
 /**
  * Cross-cutting cutover tests, all JDK-only (no debugger, no Java-specific types) — this itself
- * demonstrates that the diff and layout layers depend only on the neutral model (US2 / SC-003 / SC-004).
- * Covers the ghost-reference remap, the model-level dangling/null/reference distinction (US3), and a
+ * demonstrates that the diff and layout layers depend only on the neutral model. Covers ghost
+ * references across snapshots, the model-level dangling/null/reference distinction, and a
  * builder-only "second frontend" flow through diff + layout.
  */
 public class NeutralModelCutoverTest {
 
-    private static Variable var(String symbolId, Value value) {
-        return new Variable(symbolId, symbolId, "T", value);
+    private static DisplayableVariable var(String label, Value value) {
+        return new DisplayableVariable(label, "T", value);
     }
 
-    // ---------- US2: a diagram built purely via the builder diffs + lays out ----------
+    private static DisplayableThread thread(DisplayableFrame... frames) {
+        return new DisplayableThread("th", "main", "suspended", List.of(frames), null);
+    }
+
+    private static DisplayableFrame frame(String id, List<DisplayableVariable> variables) {
+        return new DisplayableFrame(id, id + "()", variables, null);
+    }
+
+    private static DisplayableStruct struct(String id, String type, List<DisplayableVariable> variables) {
+        return new DisplayableStruct(id, type, variables, true, 0, null);
+    }
+
+    // ---------- a snapshot built purely via the builder diffs + lays out ----------
     @Test
-    void testBuilderOnlyDiagramDiffsAndLaysOut() {
-        MemoryDiagramBuilder b1 = new MemoryDiagramBuilder("t", "th", "main", 1L);
-        b1.pushFrame("f", "f()", List.of(var("x", new Primitive("1"))));
-        b1.addBox("P", "P #1", List.of(var("P.a", new Primitive("1"))), true, 0);
-        MemoryDiagram v1 = b1.build();
+    void testBuilderOnlySnapshotDiffsAndLaysOut() {
+        MemorySnapshot v1 = MemorySnapshot.builder("t")
+                .thread(thread(frame("f", List.of(var("x", new Value.Primitive("1"))))))
+                .fill(struct("P", "P #1", List.of(var("a", new Value.Primitive("1")))))
+                .build();
+        MemorySnapshot v2 = MemorySnapshot.builder("t")
+                .thread(thread(frame("f", List.of(var("x", new Value.Primitive("2"))))))
+                .fill(struct("P", "P #1", List.of(var("a", new Value.Primitive("1")))))
+                .build();
 
-        MemoryDiagramBuilder b2 = new MemoryDiagramBuilder("t", "th", "main", 2L);
-        b2.pushFrame("f", "f()", List.of(var("x", new Primitive("2"))));
-        b2.addBox("P", "P #1", List.of(var("P.a", new Primitive("1"))), true, 0);
-        MemoryDiagram v2 = b2.build();
-
-        MemoryDiff diff = DiffEngine.diff(v1, v2);
+        MemoryDiff diff = DiffEngine.diff(v1, 1, v2);
         assertEquals(ChangeStatus.CHANGED, diff.variableStatusOf("f", "x"),
-                "second-frontend diagram: a changed local is diffed as CHANGED with no debugger");
+                "second-frontend snapshot: a changed local is diffed as CHANGED with no debugger");
 
         List<String> order = HeapLayouter.assign(v2, List.of(), new LayoutMemory());
-        assertEquals(List.of("P"), order, "second-frontend diagram: the layouter orders its box tokens");
+        assertEquals(List.of("P"), order, "second-frontend snapshot: the layouter orders its struct ids");
     }
 
-    // ---------- US3: dangling vs null vs live reference are distinct in the model ----------
+    // ---------- dangling vs null vs live reference are distinct in the model ----------
     @Test
     void testDanglingNullAndLiveReferenceAreDistinct() {
-        MemoryDiagramBuilder b = new MemoryDiagramBuilder("t", "th", "main", 1L);
-        Reference live = b.reference("R");
-        Reference dangling = b.reference("ghost"); // never provided
-        b.pushFrame("f", "f()", List.of(
+        MemorySnapshot.Builder b = MemorySnapshot.builder("t");
+        Value.Reference live = b.reference("R");
+        Value.Reference dangling = b.reference("ghost"); // never provided
+        b.thread(thread(frame("f", List.of(
                 var("live", live),
                 var("absent", null),
-                var("dangling", dangling)));
-        b.addBox("R", "R #1", List.of(), true, 0);
-        MemoryDiagram d = b.build();
+                var("dangling", dangling)))));
+        b.fill(struct("R", "R #1", List.of()));
+        MemorySnapshot d = b.build();
 
-        assertTrue(d.resolve(live).isPresent(), "a live reference resolves to its target box");
-        assertNull(d.frames().get(0).variables().get(1).value(), "the absent value is a null Value (not a reference)");
-        assertTrue(d.resolve(dangling).isEmpty(), "a dangling reference resolves to nothing, distinct from null and from a live reference");
+        assertTrue(d.resolve(live).isPresent(), "a live reference resolves to its target struct");
+        assertNull(d.threads().get(0).frames().get(0).variables().get(1).value(),
+                "the absent value is a null Value (not a reference)");
+        assertTrue(d.resolve(dangling).isEmpty(),
+                "a dangling reference resolves to nothing, distinct from null and from a live reference");
     }
 
-    // ---------- ghost references are remapped into the current diagram's coordinates ----------
+    // ---------- ghost references stay live for surviving targets ----------
     @Test
-    void testGhostReferenceRemapsToSurvivingTarget() {
-        MemoryDiagramBuilder pb = new MemoryDiagramBuilder("t", "th", "main", 1L);
-        Reference toA = pb.reference("A");
-        Reference toB = pb.reference("B");
-        pb.pushFrame("f", "f()", List.of(var("a", toA)));
-        pb.addBox("A", "A #1", List.of(var("A.next", toB)), true, 0);
-        pb.addBox("B", "B #2", List.of(), true, 0);
-        MemoryDiagram prev = pb.build();
+    void testGhostReferenceResolvesToSurvivingTarget() {
+        MemorySnapshot.Builder pb = MemorySnapshot.builder("t");
+        Value.Reference toA = pb.reference("A");
+        Value.Reference toB = pb.reference("B");
+        pb.thread(thread(frame("f", List.of(var("a", toA)))));
+        pb.fill(struct("A", "A #1", List.of(var("next", toB))));
+        pb.fill(struct("B", "B #2", List.of()));
+        MemorySnapshot prev = pb.build();
 
-        // B survives, A is deleted; B now sits at a different slot than in prev.
-        MemoryDiagramBuilder cb = new MemoryDiagramBuilder("t", "th", "main", 2L);
-        cb.pushFrame("f", "f()", List.of());
-        cb.addBox("B", "B #2", List.of(), true, 0);
-        MemoryDiagram curr = cb.build();
+        // B survives, A is deleted; B now sits at a different heap position than in prev.
+        MemorySnapshot curr = MemorySnapshot.builder("t")
+                .thread(thread(frame("f", List.of())))
+                .fill(struct("B", "B #2", List.of()))
+                .build();
 
-        MemoryDiff diff = DiffEngine.diff(prev, curr);
-        Box ghostA = diff.deletedBoxes().stream().filter(x -> x.boxToken().equals("A")).findFirst().orElseThrow();
-        Value remapped = ghostA.fields().get(0).value();
-        assertTrue(remapped instanceof Reference, "ghost A's outgoing value is still a reference");
-        assertEquals("B", curr.resolve((Reference) remapped).orElseThrow().boxToken(),
-                "ghost reference is remapped to the surviving target's CURRENT cell, not an unrelated box");
+        MemoryDiff diff = DiffEngine.diff(prev, 1, curr);
+        DisplayableStruct ghostA = diff.deletedBoxes().stream()
+                .filter(x -> x.id().equals("A")).findFirst().orElseThrow();
+        Value kept = ghostA.variables().get(0).value();
+        assertTrue(kept instanceof Value.Reference, "ghost A's outgoing value is still a reference");
+        assertEquals("B", curr.resolve((Value.Reference) kept).orElseThrow().id(),
+                "ghost reference resolves to the surviving target in the CURRENT snapshot, not an unrelated struct");
     }
 
     @Test
     void testGhostReferenceToGoneTargetBecomesAbsent() {
-        MemoryDiagramBuilder pb = new MemoryDiagramBuilder("t", "th", "main", 1L);
-        Reference toC = pb.reference("C");
-        pb.pushFrame("f", "f()", List.of());
-        pb.addBox("A", "A #1", List.of(var("A.next", toC)), true, 0);
-        pb.addBox("C", "C #2", List.of(), true, 0);
-        MemoryDiagram prev = pb.build();
+        MemorySnapshot.Builder pb = MemorySnapshot.builder("t");
+        Value.Reference toC = pb.reference("C");
+        pb.thread(thread(frame("f", List.of())));
+        pb.fill(struct("A", "A #1", List.of(var("next", toC))));
+        pb.fill(struct("C", "C #2", List.of()));
+        MemorySnapshot prev = pb.build();
 
         // Both A and its target C are gone; only an unrelated D remains.
-        MemoryDiagramBuilder cb = new MemoryDiagramBuilder("t", "th", "main", 2L);
-        cb.pushFrame("f", "f()", List.of());
-        cb.addBox("D", "D #9", List.of(), true, 0);
-        MemoryDiagram curr = cb.build();
+        MemorySnapshot curr = MemorySnapshot.builder("t")
+                .thread(thread(frame("f", List.of())))
+                .fill(struct("D", "D #9", List.of()))
+                .build();
 
-        MemoryDiff diff = DiffEngine.diff(prev, curr);
-        Box ghostA = diff.deletedBoxes().stream().filter(x -> x.boxToken().equals("A")).findFirst().orElseThrow();
-        assertNull(ghostA.fields().get(0).value(),
-                "a ghost reference whose target is also gone becomes absent (empty cell, no arrow), never a wrong-box arrow");
+        MemoryDiff diff = DiffEngine.diff(prev, 1, curr);
+        DisplayableStruct ghostA = diff.deletedBoxes().stream()
+                .filter(x -> x.id().equals("A")).findFirst().orElseThrow();
+        assertNull(ghostA.variables().get(0).value(),
+                "a ghost reference whose target is also gone becomes absent (empty cell, no arrow), never a wrong-struct arrow");
     }
 
-    // ---------- an unexplored (stub) box never resolves as dangling ----------
+    // ---------- an unexplored (stub) struct never resolves as dangling ----------
     @Test
     void testStubTargetResolvesNotDangling() {
-        MemoryDiagramBuilder b = new MemoryDiagramBuilder("t", "th", "main", 1L);
-        Reference ref = b.reference("big");
-        b.pushFrame("f", "f()", List.of(var("r", ref)));
-        b.reserveBox("big", "Big #7"); // over-cap: reserved as an unexplored stub, never filled
-        MemoryDiagram d = b.build();
+        MemorySnapshot.Builder b = MemorySnapshot.builder("t");
+        Value.Reference ref = b.reference("big");
+        b.thread(thread(frame("f", List.of(var("r", ref)))));
+        b.reserve("big", "Big #7"); // over-cap: reserved as an unexplored stub, never filled
+        MemorySnapshot d = b.build();
 
-        Box target = d.resolve(ref).orElseThrow();
+        DisplayableStruct target = d.resolve(ref).orElseThrow();
         assertFalse(target.explored(), "an over-cap target resolves to an unexplored stub, not a dangling pointer");
     }
 }

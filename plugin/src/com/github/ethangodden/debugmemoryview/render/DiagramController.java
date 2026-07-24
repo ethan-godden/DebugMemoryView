@@ -29,13 +29,11 @@ import org.eclipse.draw2d.geometry.Rectangle;
 import org.eclipse.jface.resource.ResourceManager;
 import org.eclipse.swt.SWT;
 
-import com.github.ethangodden.debugmemoryview.model.Box;
-import com.github.ethangodden.debugmemoryview.model.Frame;
-import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
-import com.github.ethangodden.debugmemoryview.model.Primitive;
-import com.github.ethangodden.debugmemoryview.model.Reference;
-import com.github.ethangodden.debugmemoryview.model.Value;
-import com.github.ethangodden.debugmemoryview.model.Variable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableFrame;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableVariable;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 import com.github.ethangodden.debugmemoryview.render.figures.ColumnFigure;
@@ -57,12 +55,12 @@ import com.github.ethangodden.debugmemoryview.ui.ViewSettings;
  * pane contents figure physically moves, figureMoved fires up the tree, and
  * every AbstractConnectionAnchor re-fires — no manual re-anchoring anywhere.
  *
- * <p>Consumes the neutral {@link MemoryDiagram} + {@link MemoryDiff}: the stack
- * is {@link Frame}s (variable rows or a body string), the heap is uniform
- * {@link Box}es (a header plus {@link Variable} field rows; statics classes are
- * ordinary boxes emitted first). Presentation is inferred from neutral signals
- * only — an unexplored box is "(not explored)", omittedCount drives the
- * "+N not captured" row, a field's {@link Value} decides its cell/arrow.
+ * <p>Consumes the neutral {@link MemorySnapshot} + {@link MemoryDiff}: the stack
+ * is {@link DisplayableFrame}s (variable rows or a note string), the heap is uniform
+ * {@link DisplayableStruct}s (a type header plus {@link DisplayableVariable} rows; statics
+ * classes are ordinary structs emitted first). Presentation is inferred from neutral signals
+ * only — an unexplored struct is "(not explored)", omitted drives the
+ * "+N not captured" row, a row's {@link Value} decides its cell/arrow.
  *
  * <p>All methods must be called on the SWT UI thread.
  */
@@ -99,9 +97,9 @@ public class DiagramController {
 
     private final Map<String, HeapObjectFigure> objectFigures = new HashMap<>();
     private final Map<VariableRowFigure, StateConnection> connectionsBySourceRow = new HashMap<>();
-    private final Map<String, Box> byToken = new HashMap<>(); // diagram heap + ghosts, for previews
+    private final Map<String, DisplayableStruct> byToken = new HashMap<>(); // snapshot heap + ghosts, for previews
 
-    private MemoryDiagram diagram;
+    private MemorySnapshot diagram;
     private MemoryDiff diff;
     private int laneCounter;
 
@@ -205,7 +203,7 @@ public class DiagramController {
     }
 
     /** Full rebuild; caches (diagram, diff) so refresh()/toggles can re-render. */
-    public void setSnapshot(MemoryDiagram newDiagram, MemoryDiff newDiff) {
+    public void setSnapshot(MemorySnapshot newDiagram, MemoryDiff newDiff) {
         diagram = newDiagram;
         diff = newDiff != null ? newDiff : MemoryDiff.initial(newDiagram);
         rebuild();
@@ -256,18 +254,18 @@ public class DiagramController {
         if (diagram == null) {
             return;
         }
-        for (Frame frame : diagram.frames()) {
-            expansion.setFrameCollapsed(frame.frameToken(), true);
+        for (DisplayableFrame frame : framesOf(diagram)) {
+            expansion.setFrameCollapsed(frame.id(), true);
         }
-        for (Box box : diagram.heap()) {
-            expansion.setObjectCollapsed(box.boxToken(), true);
+        for (DisplayableStruct struct : diagram.heap()) {
+            expansion.setObjectCollapsed(struct.id(), true);
         }
-        // Ghost frames/boxes render too (when highlighting) — collapse them as well.
-        for (Frame ghost : diff.deletedFrames()) {
-            expansion.setFrameCollapsed(ghost.frameToken(), true);
+        // Ghost frames/structs render too (when highlighting) — collapse them as well.
+        for (DisplayableFrame ghost : diff.deletedFrames()) {
+            expansion.setFrameCollapsed(ghost.id(), true);
         }
-        for (Box ghost : diff.deletedBoxes()) {
-            expansion.setObjectCollapsed(ghost.boxToken(), true);
+        for (DisplayableStruct ghost : diff.deletedBoxes()) {
+            expansion.setObjectCollapsed(ghost.id(), true);
         }
         rebuild();
     }
@@ -350,7 +348,7 @@ public class DiagramController {
             if (diagram == null) {
                 return;
             }
-            stackColumn.header().setText("Stack — " + diagram.threadName());
+            stackColumn.header().setText("Stack — " + threadNameOf(diagram));
             List<PendingRef> refs = new ArrayList<>();
             buildHeap(refs); // first: object figures must exist before arrows and stack tooltips
             buildStack(refs);
@@ -393,33 +391,33 @@ public class DiagramController {
 
     // ------------------------------------------------------------------ stack
 
-    private record FrameEntry(Frame frame, boolean ghost) {
+    private record FrameEntry(DisplayableFrame frame, boolean ghost) {
     }
 
     private void buildStack(List<PendingRef> refs) {
         List<FrameEntry> entries = new ArrayList<>();
-        // The diagram carries frames top-of-stack first; render bottom-of-stack
+        // The snapshot carries frames top-of-stack first; render bottom-of-stack
         // first so the stack grows DOWNWARD, as real memory does (the newest,
         // top-of-stack frame lands at the BOTTOM of the column).
-        List<Frame> live = diagram.frames();
+        List<DisplayableFrame> live = framesOf(diagram);
         for (int i = live.size() - 1; i >= 0; i--) {
             entries.add(new FrameEntry(live.get(i), false));
         }
         if (palette.isHighlighting()) {
-            for (Frame ghost : diff.deletedFrames()) {
+            for (DisplayableFrame ghost : diff.deletedFrames()) {
                 entries.add(new FrameEntry(ghost, true));
             }
         }
 
         for (FrameEntry entry : entries) {
-            Frame frame = entry.frame();
-            String frameToken = frame.frameToken();
+            DisplayableFrame frame = entry.frame();
+            String frameToken = frame.id();
             boolean ghost = entry.ghost();
             ChangeStatus status = ghost ? ChangeStatus.DELETED
                     : palette.effective(diff.frameStatusOf(frameToken));
             // Every frame builds its rows eagerly; only user-collapsed frames stay shut.
             boolean expanded = !expansion.isFrameCollapsed(frameToken);
-            ContainerFigure figure = new ContainerFigure(frame.header(), status, expanded, palette, fonts, () -> {
+            ContainerFigure figure = new ContainerFigure(frame.label(), status, expanded, palette, fonts, () -> {
                 expansion.setFrameCollapsed(frameToken, expanded);
                 rebuild();
             });
@@ -430,24 +428,25 @@ public class DiagramController {
         }
     }
 
-    private void populateFrame(ContainerFigure figure, Frame frame, boolean ghost, List<PendingRef> refs) {
-        String frameToken = frame.frameToken();
-        if (frame.hasBody()) {
-            // Native/obsolete/unreadable frame: a body string stands in for variable rows.
-            figure.addRow(infoRow(frame.body()));
+    private void populateFrame(ContainerFigure figure, DisplayableFrame frame, boolean ghost, List<PendingRef> refs) {
+        String frameToken = frame.id();
+        if (frame.note() != null) {
+            // Native/obsolete/unreadable frame: a note string stands in for variable rows.
+            figure.addRow(infoRow(frame.note()));
             return;
         }
-        List<Variable> variables = frame.variables(); // this first, then locals
+        List<DisplayableVariable> variables = frame.variables(); // this first, then locals
+        List<String> rowKeys = MemoryDiff.rowKeys(variables); // same keying as the differ
         renderCapped("frame:" + frameToken, variables.size(), settings.maxLocalsPerFrameRendered, i -> {
-            Variable variable = variables.get(i);
+            DisplayableVariable variable = variables.get(i);
             ChangeStatus status = ghost ? ChangeStatus.DELETED
-                    : palette.effective(diff.variableStatusOf(frameToken, variable.symbolId()));
+                    : palette.effective(diff.variableStatusOf(frameToken, rowKeys.get(i)));
             return newRow(variable, status, refs, true);
         }, figure::addRow);
         if (!ghost && palette.isHighlighting()) {
-            List<Variable> ghostVariables = diff.deletedVariables().get(frameToken);
+            List<DisplayableVariable> ghostVariables = diff.deletedVariables().get(frameToken);
             if (ghostVariables != null) {
-                for (Variable variable : ghostVariables) {
+                for (DisplayableVariable variable : ghostVariables) {
                     figure.addRow(newRow(variable, ChangeStatus.DELETED, refs, true));
                 }
             }
@@ -457,34 +456,34 @@ public class DiagramController {
     // ------------------------------------------------------------------- heap
 
     private void buildHeap(List<PendingRef> refs) {
-        List<Box> ghosts = new ArrayList<>();
+        List<DisplayableStruct> ghosts = new ArrayList<>();
         if (palette.isHighlighting()) {
-            for (Box ghost : diff.deletedBoxes()) {
-                if (isVisibleBox(ghost.boxToken())) {
+            for (DisplayableStruct ghost : diff.deletedBoxes()) {
+                if (isVisibleBox(ghost.id())) {
                     ghosts.add(ghost);
                 }
             }
         }
-        for (Box box : diagram.heap()) {
-            byToken.put(box.boxToken(), box);
+        for (DisplayableStruct struct : diagram.heap()) {
+            byToken.put(struct.id(), struct);
         }
-        for (Box ghost : ghosts) {
-            byToken.put(ghost.boxToken(), ghost);
+        for (DisplayableStruct ghost : ghosts) {
+            byToken.put(ghost.id(), ghost);
         }
 
         List<String> order = HeapLayouter.assign(diagram, ghosts, layoutMemory);
 
         Set<String> ghostTokens = new HashSet<>();
-        for (Box ghost : ghosts) {
-            ghostTokens.add(ghost.boxToken());
+        for (DisplayableStruct ghost : ghosts) {
+            ghostTokens.add(ghost.id());
         }
 
-        // Heap cap chosen in build (heap map) order: roots-first survival. Only the
-        // live, visible (statics filtered) boxes count toward the cap.
+        // Heap cap chosen in discovery order: roots-first survival. Only the
+        // live, visible (statics filtered) structs count toward the cap.
         List<String> visibleLive = new ArrayList<>();
-        for (Box box : diagram.heap()) {
-            if (isVisibleBox(box.boxToken())) {
-                visibleLive.add(box.boxToken());
+        for (DisplayableStruct struct : diagram.heap()) {
+            if (isVisibleBox(struct.id())) {
+                visibleLive.add(struct.id());
             }
         }
         int heapCap = expansion.capOf(CAP_KEY_HEAP, settings.maxHeapObjectsRendered);
@@ -508,11 +507,11 @@ public class DiagramController {
             if (!ghost && !rendered.contains(token)) {
                 continue;
             }
-            Box box = byToken.get(token);
-            if (box == null) {
+            DisplayableStruct struct = byToken.get(token);
+            if (struct == null) {
                 continue;
             }
-            heapBody.add(buildObjectFigure(box, ghost, refs));
+            heapBody.add(buildObjectFigure(struct, ghost, refs));
         }
         if (omitted > 0) {
             heapBody.add(unrenderedBox(omitted));
@@ -525,59 +524,60 @@ public class DiagramController {
         return settings.showStatics || !token.startsWith(STATICS_TOKEN_PREFIX);
     }
 
-    private HeapObjectFigure buildObjectFigure(Box box, boolean ghost, List<PendingRef> refs) {
-        String token = box.boxToken();
+    private HeapObjectFigure buildObjectFigure(DisplayableStruct struct, boolean ghost, List<PendingRef> refs) {
+        String token = struct.id();
         ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.boxStatusOf(token));
         boolean collapsed = expansion.isObjectCollapsed(token);
-        HeapObjectFigure figure = new HeapObjectFigure(box.header(), status, collapsed, palette, fonts,
+        HeapObjectFigure figure = new HeapObjectFigure(struct.type(), status, collapsed, palette, fonts,
                 () -> {
                     expansion.setObjectCollapsed(token, !collapsed);
                     rebuild();
                 });
         if (!collapsed) {
-            populateObject(figure, box, ghost, refs);
+            populateObject(figure, struct, ghost, refs);
         }
         objectFigures.put(token, figure); // aliasing: same token -> same figure instance
         return figure;
     }
 
     /**
-     * Uniform box body: a single muted "(not explored)" row for an unexplored box,
-     * otherwise one row per {@link Variable} field ("identifier : [value box]"),
+     * Uniform struct body: a single muted "(not explored)" row for an unexplored
+     * struct, otherwise one row per {@link DisplayableVariable} ("label : [value box]"),
      * a "+N more…" expander when the render cap bites, and a "+N not captured"
-     * row for the fields dropped at extraction ({@code omittedCount}). Strings,
+     * row for the fields dropped at extraction ({@code omitted}). Strings,
      * arrays, boxed values and enums all arrive as ordinary fields, so no
      * per-kind special-casing is needed.
      */
-    private void populateObject(HeapObjectFigure figure, Box box, boolean ghost, List<PendingRef> refs) {
-        if (!box.explored()) {
+    private void populateObject(HeapObjectFigure figure, DisplayableStruct struct, boolean ghost, List<PendingRef> refs) {
+        if (!struct.explored()) {
             figure.addRow(infoRow("(not explored)"));
             return;
         }
-        String token = box.boxToken();
-        List<Variable> fields = box.fields();
+        String token = struct.id();
+        List<DisplayableVariable> fields = struct.variables();
+        List<String> rowKeys = MemoryDiff.rowKeys(fields); // same keying as the differ
         renderCapped("obj:" + token, fields.size(), fieldCapFor(token), i -> {
-            Variable field = fields.get(i);
+            DisplayableVariable field = fields.get(i);
             ChangeStatus status = ghost ? ChangeStatus.DELETED
-                    : palette.effective(diff.fieldStatusOf(token, field.symbolId()));
+                    : palette.effective(diff.fieldStatusOf(token, rowKeys.get(i)));
             return newRow(field, status, refs, false);
         }, figure::addRow);
-        if (box.omittedCount() > 0) {
-            figure.addRow(infoRow("(+" + box.omittedCount() + " not captured)"));
+        if (struct.omitted() > 0) {
+            figure.addRow(infoRow("(+" + struct.omitted() + " not captured)"));
         }
     }
 
     /**
-     * The default render cap for a box's rows. Positional fields (arrays / string
-     * chars, whose first field identifier is "0") cap like an array; named fields
-     * cap like object fields. Statics boxes use the field cap.
+     * The default render cap for a struct's rows. Positional fields (arrays / string
+     * chars, whose first row label is "0") cap like an array; named fields
+     * cap like object fields. Statics structs use the field cap.
      */
     private int fieldCapFor(String token) {
         if (token.startsWith(STATICS_TOKEN_PREFIX)) {
             return settings.maxFieldsPerObjectRendered;
         }
-        Box box = byToken.get(token);
-        if (box != null && !box.fields().isEmpty() && "0".equals(box.fields().get(0).identifier())) {
+        DisplayableStruct struct = byToken.get(token);
+        if (struct != null && !struct.variables().isEmpty() && "0".equals(struct.variables().get(0).label())) {
             return settings.maxArrayElementsRendered;
         }
         return settings.maxFieldsPerObjectRendered;
@@ -601,34 +601,34 @@ public class DiagramController {
     // ------------------------------------------------------------------- rows
 
     /**
-     * "identifier : &lt;box&gt;" — no type text (types live in the heap box headers).
+     * "label : &lt;box&gt;" — no type text (types live in the heap struct headers).
      * The box holds the primitive text; it is empty for null cells and normal
      * references (the arrow tail sits inside it), and shows a distinct dangling
-     * marker for a reference that resolves to no box. A box-only field (the enum
-     * constant marker: value==null and no declared type) drops the identifier and
-     * shows the identifier text inside the box. The declared type moves into the
+     * marker for a reference that resolves to no struct. A box-only field (the enum
+     * constant marker: value==null and no declared type) drops the label and
+     * shows the label text inside the box. The declared type moves into the
      * tooltip.
      */
-    private VariableRowFigure newRow(Variable variable, ChangeStatus status, List<PendingRef> refs,
+    private VariableRowFigure newRow(DisplayableVariable variable, ChangeStatus status, List<PendingRef> refs,
             boolean fromStack) {
         Value value = variable.value();
 
         // Box-only content row: the enum constant marker arrives as a leading field
-        // with value==null and no declared type. Its identifier is the content shown
+        // with value==null and no declared type. Its label is the content shown
         // in the box (no label, no arrow), mirroring the old enum-constant/boxed row.
-        if (value == null && variable.typeLabel() == null) {
-            VariableRowFigure row = new VariableRowFigure(null, variable.identifier(), null, status, palette, fonts);
+        if (value == null && variable.type() == null) {
+            VariableRowFigure row = new VariableRowFigure(null, variable.label(), null, status, palette, fonts);
             hover.hookRow(row);
             return row;
         }
 
-        if (value instanceof Reference ref) {
-            Optional<Box> target = diagram.resolve(ref);
+        if (value instanceof Value.Reference ref) {
+            Optional<DisplayableStruct> target = diagram.resolve(ref);
             if (target.isEmpty()) {
                 return danglingRow(variable, status);
             }
-            String targetToken = target.get().boxToken();
-            VariableRowFigure row = new VariableRowFigure(variable.identifier(), "", targetToken, status,
+            String targetToken = target.get().id();
+            VariableRowFigure row = new VariableRowFigure(variable.label(), "", targetToken, status,
                     palette, fonts);
             hover.hookRow(row); // reference rows add click/preview/target outline
             refs.add(new PendingRef(row, targetToken, status, fromStack));
@@ -636,29 +636,29 @@ public class DiagramController {
         }
 
         // Primitive or absent/null value: an empty cell (primitives fill it), no arrow.
-        VariableRowFigure row = new VariableRowFigure(variable.identifier(), boxTextOf(value), null, status,
+        VariableRowFigure row = new VariableRowFigure(variable.label(), boxTextOf(value), null, status,
                 palette, fonts);
         hover.hookRow(row); // every row hover-tints
-        row.setToolTip(tooltipLabel(typedTooltip(variable.typeLabel(),
-                value instanceof Primitive primitive ? primitive.value() : "null")));
+        row.setToolTip(tooltipLabel(typedTooltip(variable.type(),
+                value instanceof Value.Primitive primitive ? primitive.value() : "null")));
         return row;
     }
 
     /**
-     * A dangling reference: the target cell holds no box. Rendered with a distinct
+     * A dangling reference: the target resolves to no struct. Rendered with a distinct
      * severed-stub glyph in the cell — no arrow (unlike a live reference) and not
      * an empty cell (unlike a null value) — so all three read differently.
      */
-    private VariableRowFigure danglingRow(Variable variable, ChangeStatus status) {
-        VariableRowFigure row = new VariableRowFigure(variable.identifier(), "⇥⌀", null, status, palette, fonts);
+    private VariableRowFigure danglingRow(DisplayableVariable variable, ChangeStatus status) {
+        VariableRowFigure row = new VariableRowFigure(variable.label(), "⇥⌀", null, status, palette, fonts);
         hover.hookRow(row);
-        row.setToolTip(tooltipLabel(typedTooltip(variable.typeLabel(), "dangling reference (no target)")));
+        row.setToolTip(tooltipLabel(typedTooltip(variable.type(), "dangling reference (no target)")));
         return row;
     }
 
     /** In-box text: primitives verbatim (char-capped), else empty (null cell). */
     private String boxTextOf(Value value) {
-        if (value instanceof Primitive primitive) {
+        if (value instanceof Value.Primitive primitive) {
             // abbreviate's width includes the marker, so +1 keeps "maxValueChars chars + …".
             return StringUtils.abbreviate(primitive.value(), Ellipsis.ELLIPSIS, settings.maxValueChars + 1);
         }
@@ -747,13 +747,13 @@ public class DiagramController {
         connectionLayer.add(connection);
     }
 
-    /** Lazy tooltip body for a reference row; null when the target box is unknown. */
+    /** Lazy tooltip body for a reference row; null when the target struct is unknown. */
     IFigure buildPreview(VariableRowFigure row) {
         if (row.targetToken() == null) {
             return null;
         }
-        Box box = byToken.get(row.targetToken());
-        return box == null ? null : new ObjectPreviewFigure(box, palette, fonts);
+        DisplayableStruct struct = byToken.get(row.targetToken());
+        return struct == null ? null : new ObjectPreviewFigure(struct, palette, fonts);
     }
 
     /** Click-to-reveal: scroll the heap pane to the target and flash its outline. */
@@ -783,6 +783,17 @@ public class DiagramController {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    // The pipeline extracts one suspended thread per snapshot; the view renders that
+    // thread's stack. (A future multi-thread snapshot would need one column per thread.)
+
+    private static List<DisplayableFrame> framesOf(MemorySnapshot snapshot) {
+        return snapshot.threads().isEmpty() ? List.of() : snapshot.threads().get(0).frames();
+    }
+
+    private static String threadNameOf(MemorySnapshot snapshot) {
+        return snapshot.threads().isEmpty() ? "?" : snapshot.threads().get(0).name();
+    }
 
     private Rectangle gutterAbsolute() {
         Rectangle stackBounds = stackColumn.getBounds().getCopy();

@@ -2,8 +2,7 @@ package com.github.ethangodden.debugmemoryview.render;
 
 import org.apache.commons.lang3.StringUtils;
 
-import com.github.ethangodden.debugmemoryview.model.Primitive;
-import com.github.ethangodden.debugmemoryview.model.Value;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 
 /** Text truncation and row-text composition helpers. */
 public final class Ellipsis {
@@ -14,8 +13,8 @@ public final class Ellipsis {
     }
 
     /**
-     * Display text of a value, char-capped. A {@link Primitive} renders its string; a reference
-     * renders "→" (the arrow carries the target) and the absent/null value renders "null".
+     * Display text of a value, char-capped. A {@link Value.Primitive} renders its string; a
+     * reference renders "→" (the arrow carries the target) and the absent/null value renders "null".
      */
     public static String valueText(Value value, int maxChars) {
         // abbreviate's width includes the marker, so maxChars + 1 keeps "maxChars chars + …".
@@ -27,7 +26,7 @@ public final class Ellipsis {
         if (value == null) {
             return "null";
         }
-        if (value instanceof Primitive primitive) {
+        if (value instanceof Value.Primitive primitive) {
             return primitive.value();
         }
         return "→"; // Reference: the arrow carries the target

@@ -6,16 +6,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import com.github.ethangodden.debugmemoryview.model.Box;
-import com.github.ethangodden.debugmemoryview.model.MemoryDiagram;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
 
 /**
- * Deterministic single-column ordering of the heap: boxes stack vertically in
- * the diagram's discovery order ({@link MemoryDiagram#heap()}, already emitted
+ * Deterministic single-column ordering of the heap: structs stack vertically in
+ * the snapshot's discovery order ({@link MemorySnapshot#heap()}, already emitted
  * statics-first then BFS order by the adapter), with {@link LayoutMemory}
- * keeping previously seen boxes in their remembered positions (sticky orderKey)
- * — existing tokens never move, new tokens append, ghosts keep their slots,
- * evicted tokens drop.
+ * keeping previously seen structs in their remembered positions (sticky orderKey)
+ * — existing ids never move, new ids append, ghosts keep their slots,
+ * evicted ids drop.
  *
  * PURE: imports from eclipseview.model and the JDK only (headless-testable).
  */
@@ -25,36 +25,36 @@ public final class HeapLayouter {
     }
 
     /**
-     * Returns the heap column: box tokens ordered by the sticky orderKey. Ghosts
-     * (DELETED boxes living only in the diff) keep their remembered positions; a
-     * ghost never seen before appends after the live boxes.
+     * Returns the heap column: struct ids ordered by the sticky orderKey. Ghosts
+     * (DELETED structs living only in the diff) keep their remembered positions; a
+     * ghost never seen before appends after the live structs.
      */
-    public static List<String> assign(MemoryDiagram diagram, List<Box> ghostBoxes, LayoutMemory memory) {
+    public static List<String> assign(MemorySnapshot snapshot, List<DisplayableStruct> ghosts, LayoutMemory memory) {
         Set<String> live = new HashSet<>();
-        for (Box box : diagram.heap()) {
-            live.add(box.boxToken());
+        for (DisplayableStruct struct : snapshot.heap()) {
+            live.add(struct.id());
         }
-        for (Box ghost : ghostBoxes) {
-            live.add(ghost.boxToken());
+        for (DisplayableStruct ghost : ghosts) {
+            live.add(ghost.id());
         }
         memory.retainAll(live);
 
         List<String> ordered = new ArrayList<>(live.size());
         Set<String> seen = new HashSet<>();
-        for (Box box : diagram.heap()) {
-            String token = box.boxToken();
-            memory.assign(token);
-            ordered.add(token);
-            seen.add(token);
+        for (DisplayableStruct struct : snapshot.heap()) {
+            String id = struct.id();
+            memory.assign(id);
+            ordered.add(id);
+            seen.add(id);
         }
-        for (Box ghost : ghostBoxes) {
-            String token = ghost.boxToken();
-            if (seen.add(token)) {
-                memory.assign(token);
-                ordered.add(token);
+        for (DisplayableStruct ghost : ghosts) {
+            String id = ghost.id();
+            if (seen.add(id)) {
+                memory.assign(id);
+                ordered.add(id);
             }
         }
-        ordered.sort(Comparator.comparingLong(token -> memory.orderKeyOf(token).longValue()));
+        ordered.sort(Comparator.comparingLong(id -> memory.orderKeyOf(id).longValue()));
         return ordered;
     }
 }
