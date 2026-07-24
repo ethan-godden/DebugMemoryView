@@ -86,9 +86,10 @@ public final class SnapshotExtractor {
     private IJavaThread thread;
     private IDebugTarget target;
 
-    // The builder is the sole sink; it owns struct discovery order (first reserve/fill). We keep our
-    // own reservedBoxes set to mirror the old "heap.get(id) == null" stub-first bookkeeping so we
-    // reserve each struct exactly once and only enqueue it for exploration on first encounter.
+    // The builder is the sole sink; it owns struct discovery order (first reserve/fill). The Builder
+    // exposes no membership query and reserve() is a silent no-op on repeats, so reservedBoxes is
+    // what ensures each object is enqueued for exploration (and its type name fetched over the
+    // wire) exactly once.
     private MemorySnapshot.Builder builder;
     private final List<DisplayableFrame> frames = new ArrayList<>();
     private final Set<Long> reservedBoxes = new HashSet<>();
@@ -148,8 +149,7 @@ public final class SnapshotExtractor {
         drainHeapQueue();
 
         // The walk suspends exactly one thread; monitors/contention are not captured (yet).
-        builder.thread(new DisplayableThread(threadToken, threadName, "suspended", //$NON-NLS-1$
-                List.copyOf(frames), null));
+        builder.thread(new DisplayableThread(threadToken, threadName, "suspended", frames, null)); //$NON-NLS-1$
         return builder.build();
     }
 
@@ -173,11 +173,16 @@ public final class SnapshotExtractor {
             } catch (DebugException e) {
                 // Per-frame degradation (incl. ERR_INVALID_STACK_FRAME): note-only placeholder, walk survives.
                 abortIfUnusable();
-                frames.add(new DisplayableFrame(frameToken, header, List.of(), shortMessage(e)));
+                noteFrame(frameToken, header, shortMessage(e));
                 return;
             }
         }
-        frames.add(new DisplayableFrame(frameToken, header, List.of(), "(obsolete method)")); //$NON-NLS-1$
+        noteFrame(frameToken, header, "(obsolete method)"); //$NON-NLS-1$
+    }
+
+    /** A note-only frame: the note shows in place of variable rows. */
+    private void noteFrame(String id, String label, String note) {
+        frames.add(new DisplayableFrame(id, label, List.of(), note));
     }
 
     private void completeFrame(IJavaStackFrame frame, String frameToken, String typeName,
@@ -212,11 +217,10 @@ public final class SnapshotExtractor {
 
         if (variables.isEmpty()) {
             // No receiver and no locals: a note-only placeholder, as the old model rendered.
-            frames.add(new DisplayableFrame(frameToken, header, List.of(),
-                    nativeFrame ? "(native method)" : "(no variables)")); //$NON-NLS-1$ //$NON-NLS-2$
+            noteFrame(frameToken, header, nativeFrame ? "(native method)" : "(no variables)"); //$NON-NLS-1$ //$NON-NLS-2$
             return;
         }
-        frames.add(new DisplayableFrame(frameToken, header, List.copyOf(variables), null));
+        frames.add(new DisplayableFrame(frameToken, header, variables, null));
     }
 
     private static String buildLabel(String typeName, String methodName, int lineNumber) {
@@ -291,11 +295,16 @@ public final class SnapshotExtractor {
         }
     }
 
+    /** Fills {@code id}'s struct: always explored; monitors are not captured (yet). */
+    private void fill(String id, String type, List<DisplayableVariable> rows, int omitted) {
+        builder.fill(new DisplayableStruct(id, type, rows, true, omitted, null));
+    }
+
     private void buildNode(Pending pending) {
         String simple = simpleName(pending.typeName());
         try {
             if (pending.object() instanceof IJavaArray array) {
-                buildArray(array, pending, simple);
+                buildArray(array, pending);
                 return;
             }
             String signature = pending.object().getSignature();
@@ -315,8 +324,7 @@ public final class SnapshotExtractor {
         }
     }
 
-    private void buildArray(IJavaArray array, Pending pending, String simple)
-            throws DebugException {
+    private void buildArray(IJavaArray array, Pending pending) throws DebugException {
         int length = array.getLength();
         int shown = Math.min(length, limits.maxArrayElements());
         String componentType = componentTypeName(pending.typeName());
@@ -342,8 +350,7 @@ public final class SnapshotExtractor {
         }
         // Header: componentBase + "[" + length + "] #" + id.
         String header = componentBase(pending.typeName()) + "[" + length + "] #" + pending.id(); //$NON-NLS-1$ //$NON-NLS-2$
-        builder.fill(new DisplayableStruct(boxToken(pending.id()), header,
-                List.copyOf(fields), true, length - shown, null));
+        fill(boxToken(pending.id()), header, fields, length - shown);
     }
 
     /** An array element row: positional label, component type in the type label. */
@@ -356,7 +363,7 @@ public final class SnapshotExtractor {
         CappedText capped = readCappedString(object);
         if (capped == null) {
             // Too large to pull over the wire: no characters, single omitted marker.
-            builder.fill(new DisplayableStruct(boxToken(id), header, List.of(), true, 1, null));
+            fill(boxToken(id), header, List.of(), 1);
             return;
         }
         String text = capped.text();
@@ -366,8 +373,7 @@ public final class SnapshotExtractor {
             fields.add(new DisplayableVariable(Integer.toString(i), "char", //$NON-NLS-1$
                     new Value.Primitive(String.valueOf(text.charAt(i)))));
         }
-        builder.fill(new DisplayableStruct(boxToken(id), header, List.copyOf(fields), true,
-                capped.truncated() ? 1 : 0, null));
+        fill(boxToken(id), header, fields, capped.truncated() ? 1 : 0);
     }
 
     /** Capped raw contents of a String plus whether the cap bit, or null if too large to pull over the wire. */
@@ -395,7 +401,7 @@ public final class SnapshotExtractor {
         String header = simpleName(wrapperTypeName) + " #" + id; //$NON-NLS-1$
         // A boxed primitive is a single field carrying the (possibly cache-annotated) display value.
         DisplayableVariable field = new DisplayableVariable("value", wrapperTypeName, new Value.Primitive(text)); //$NON-NLS-1$
-        builder.fill(new DisplayableStruct(boxToken(id), header, List.of(field), true, 0, null));
+        fill(boxToken(id), header, List.of(field), 0);
     }
 
     /** Spec-defined valueOf caches: Integer/Short/Byte/Long in [-128,127], Character in [0,127], Boolean always. */
@@ -474,8 +480,7 @@ public final class SnapshotExtractor {
         } else {
             boxFields = fields;
         }
-        builder.fill(new DisplayableStruct(boxToken(pending.id()), header,
-                List.copyOf(boxFields), true, omitted, null));
+        fill(boxToken(pending.id()), header, boxFields, omitted);
     }
 
     private static boolean isEnumBaseField(IJavaVariable variable) {
@@ -554,8 +559,7 @@ public final class SnapshotExtractor {
             }
             // The struct was reserved in extract(); fill it (even when empty) so it holds its
             // top-of-column position. An empty statics struct carries no fields.
-            builder.fill(new DisplayableStruct(staticsBoxToken(className), staticsHeader(className),
-                    List.copyOf(fields), true, omitted, null));
+            fill(staticsBoxToken(className), staticsHeader(className), fields, omitted);
         }
     }
 

@@ -51,10 +51,8 @@ public final class SnapshotPipeline {
     private record Request(long seq, IJavaThread thread) {
     }
 
-    /** One thread's cached suspend state, keyed by threadKey; the parts always move together.
-     * {@code sequence} is the extraction sequence the snapshot was produced under — the snapshot
-     * itself no longer carries one, and the next diff reports it as its baseline. */
-    private record Baseline(MemorySnapshot snapshot, long sequence, MemoryDiff diff, long generation) {
+    /** One thread's cached suspend state, keyed by threadKey; the parts always move together. */
+    private record Baseline(MemorySnapshot snapshot, MemoryDiff diff, long generation) {
     }
 
     private final AtomicLong seq = new AtomicLong();
@@ -261,9 +259,8 @@ public final class SnapshotPipeline {
                     return Status.CANCEL_STATUS; // superseded during the run; never store or show
                 }
                 MemorySnapshot previous = baseline != null ? baseline.snapshot() : null;
-                long previousSequence = baseline != null ? baseline.sequence() : -1;
-                MemoryDiff diff = DiffEngine.diff(previous, previousSequence, snapshot);
-                baselines.put(threadKey, new Baseline(snapshot, req.seq(), diff, generation));
+                MemoryDiff diff = DiffEngine.diff(previous, snapshot);
+                baselines.put(threadKey, new Baseline(snapshot, diff, generation));
                 publish(req.seq(), snapshot, diff);
                 return Status.OK_STATUS;
             } catch (OperationCanceledException e) {

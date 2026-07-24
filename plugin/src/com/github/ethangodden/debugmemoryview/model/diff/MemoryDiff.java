@@ -22,14 +22,13 @@ import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableVa
  * {@link DisplayableVariable} rows keyed by their {@link #rowKeys row key} within their struct).
  */
 public record MemoryDiff(
-        long baselineSequence,                              // -1 for an initial diff
         Map<String, ChangeStatus> frameStatus,              // frame id -> status
         Map<String, ChangeStatus> variableStatus,           // frameId#rowKey -> status
-        Map<String, ChangeStatus> boxStatus,                // struct id -> status
+        Map<String, ChangeStatus> structStatus,             // struct id -> status
         Map<String, Map<String, ChangeStatus>> fieldStatus, // struct id -> (rowKey -> status)
         List<DisplayableFrame> deletedFrames,
         Map<String, List<DisplayableVariable>> deletedVariables, // surviving frame id -> vanished rows
-        List<DisplayableStruct> deletedBoxes) {
+        List<DisplayableStruct> deletedStructs) {
 
     /** Composite key for a variable row: its frame id plus its row key. */
     public static String variableKey(String frameId, String rowKey) {
@@ -64,12 +63,12 @@ public record MemoryDiff(
                 }
             }
         }
-        Map<String, ChangeStatus> boxes = new HashMap<>();
+        Map<String, ChangeStatus> structs = new HashMap<>();
         for (DisplayableStruct s : d.heap()) {
-            boxes.put(s.id(), ChangeStatus.NEW);
+            structs.put(s.id(), ChangeStatus.NEW);
         }
         // Fields of NEW structs carry no entries; the struct-level NEW border communicates newness.
-        return new MemoryDiff(-1, Map.copyOf(frames), Map.copyOf(variables), Map.copyOf(boxes),
+        return new MemoryDiff(Map.copyOf(frames), Map.copyOf(variables), Map.copyOf(structs),
                 Map.of(), List.of(), Map.of(), List.of());
     }
 
@@ -81,8 +80,8 @@ public record MemoryDiff(
         return variableStatus.getOrDefault(variableKey(frameId, rowKey), ChangeStatus.UNCHANGED);
     }
 
-    public ChangeStatus boxStatusOf(String structId) {
-        return boxStatus.getOrDefault(structId, ChangeStatus.UNCHANGED);
+    public ChangeStatus structStatusOf(String structId) {
+        return structStatus.getOrDefault(structId, ChangeStatus.UNCHANGED);
     }
 
     /** Fields of a NEW struct have no entries; the struct-level NEW border communicates newness. */

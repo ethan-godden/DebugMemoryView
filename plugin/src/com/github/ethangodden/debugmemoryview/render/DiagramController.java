@@ -32,6 +32,7 @@ import org.eclipse.swt.SWT;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableFrame;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableThread;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableVariable;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
@@ -97,9 +98,9 @@ public class DiagramController {
 
     private final Map<String, HeapObjectFigure> objectFigures = new HashMap<>();
     private final Map<VariableRowFigure, StateConnection> connectionsBySourceRow = new HashMap<>();
-    private final Map<String, DisplayableStruct> byToken = new HashMap<>(); // snapshot heap + ghosts, for previews
+    private final Map<String, DisplayableStruct> byId = new HashMap<>(); // snapshot heap + ghosts, for previews
 
-    private MemorySnapshot diagram;
+    private MemorySnapshot snapshot;
     private MemoryDiff diff;
     private int laneCounter;
 
@@ -202,10 +203,10 @@ public class DiagramController {
         return rootPane;
     }
 
-    /** Full rebuild; caches (diagram, diff) so refresh()/toggles can re-render. */
-    public void setSnapshot(MemorySnapshot newDiagram, MemoryDiff newDiff) {
-        diagram = newDiagram;
-        diff = newDiff != null ? newDiff : MemoryDiff.initial(newDiagram);
+    /** Full rebuild; caches (snapshot, diff) so refresh()/toggles can re-render. */
+    public void setSnapshot(MemorySnapshot newSnapshot, MemoryDiff newDiff) {
+        snapshot = newSnapshot;
+        diff = newDiff != null ? newDiff : MemoryDiff.initial(newSnapshot);
         rebuild();
     }
 
@@ -216,7 +217,7 @@ public class DiagramController {
 
     /** Empties the diagram and drops the cached diagram. */
     public void clear() {
-        diagram = null;
+        snapshot = null;
         diff = null;
         hover.reset();
         discardFigures();
@@ -233,7 +234,7 @@ public class DiagramController {
 
     /** Re-renders the cached diagram (theme switch / preference change pickup). */
     public void refresh() {
-        if (diagram != null) {
+        if (snapshot != null) {
             rebuild();
         } else {
             palette.refresh(canvas, settings.highlightChanges);
@@ -243,7 +244,7 @@ public class DiagramController {
     }
 
     public void expandAll() {
-        if (diagram == null) {
+        if (snapshot == null) {
             return;
         }
         expansion.expandAll();
@@ -251,20 +252,20 @@ public class DiagramController {
     }
 
     public void collapseAll() {
-        if (diagram == null) {
+        if (snapshot == null) {
             return;
         }
-        for (DisplayableFrame frame : framesOf(diagram)) {
+        for (DisplayableFrame frame : framesOf(snapshot)) {
             expansion.setFrameCollapsed(frame.id(), true);
         }
-        for (DisplayableStruct struct : diagram.heap()) {
+        for (DisplayableStruct struct : snapshot.heap()) {
             expansion.setObjectCollapsed(struct.id(), true);
         }
         // Ghost frames/structs render too (when highlighting) — collapse them as well.
         for (DisplayableFrame ghost : diff.deletedFrames()) {
             expansion.setFrameCollapsed(ghost.id(), true);
         }
-        for (DisplayableStruct ghost : diff.deletedBoxes()) {
+        for (DisplayableStruct ghost : diff.deletedStructs()) {
             expansion.setObjectCollapsed(ghost.id(), true);
         }
         rebuild();
@@ -272,7 +273,7 @@ public class DiagramController {
 
     public void setShowStatics(boolean show) {
         settings.showStatics = show;
-        if (diagram != null) {
+        if (snapshot != null) {
             rebuild();
         }
     }
@@ -345,10 +346,10 @@ public class DiagramController {
             palette.refresh(canvas, settings.highlightChanges);
             applyChrome();
             discardFigures();
-            if (diagram == null) {
+            if (snapshot == null) {
                 return;
             }
-            stackColumn.header().setText("Stack — " + threadNameOf(diagram));
+            stackColumn.header().setText("Stack — " + threadNameOf(snapshot));
             List<PendingRef> refs = new ArrayList<>();
             buildHeap(refs); // first: object figures must exist before arrows and stack tooltips
             buildStack(refs);
@@ -379,7 +380,7 @@ public class DiagramController {
         connectionLayer.removeAll();
         objectFigures.clear();
         connectionsBySourceRow.clear();
-        byToken.clear();
+        byId.clear();
         laneCounter = 0;
     }
 
@@ -399,7 +400,7 @@ public class DiagramController {
         // The snapshot carries frames top-of-stack first; render bottom-of-stack
         // first so the stack grows DOWNWARD, as real memory does (the newest,
         // top-of-stack frame lands at the BOTTOM of the column).
-        List<DisplayableFrame> live = framesOf(diagram);
+        List<DisplayableFrame> live = framesOf(snapshot);
         for (int i = live.size() - 1; i >= 0; i--) {
             entries.add(new FrameEntry(live.get(i), false));
         }
@@ -436,7 +437,8 @@ public class DiagramController {
             return;
         }
         List<DisplayableVariable> variables = frame.variables(); // this first, then locals
-        List<String> rowKeys = MemoryDiff.rowKeys(variables); // same keying as the differ
+        // Same keying as the differ; ghost rows are uniformly DELETED, so their keys are never read.
+        List<String> rowKeys = ghost ? List.of() : MemoryDiff.rowKeys(variables);
         renderCapped("frame:" + frameToken, variables.size(), settings.maxLocalsPerFrameRendered, i -> {
             DisplayableVariable variable = variables.get(i);
             ChangeStatus status = ghost ? ChangeStatus.DELETED
@@ -458,20 +460,20 @@ public class DiagramController {
     private void buildHeap(List<PendingRef> refs) {
         List<DisplayableStruct> ghosts = new ArrayList<>();
         if (palette.isHighlighting()) {
-            for (DisplayableStruct ghost : diff.deletedBoxes()) {
-                if (isVisibleBox(ghost.id())) {
+            for (DisplayableStruct ghost : diff.deletedStructs()) {
+                if (isVisibleStruct(ghost.id())) {
                     ghosts.add(ghost);
                 }
             }
         }
-        for (DisplayableStruct struct : diagram.heap()) {
-            byToken.put(struct.id(), struct);
+        for (DisplayableStruct struct : snapshot.heap()) {
+            byId.put(struct.id(), struct);
         }
         for (DisplayableStruct ghost : ghosts) {
-            byToken.put(ghost.id(), ghost);
+            byId.put(ghost.id(), ghost);
         }
 
-        List<String> order = HeapLayouter.assign(diagram, ghosts, layoutMemory);
+        List<String> order = HeapLayouter.assign(snapshot, ghosts, layoutMemory);
 
         Set<String> ghostTokens = new HashSet<>();
         for (DisplayableStruct ghost : ghosts) {
@@ -481,8 +483,8 @@ public class DiagramController {
         // Heap cap chosen in discovery order: roots-first survival. Only the
         // live, visible (statics filtered) structs count toward the cap.
         List<String> visibleLive = new ArrayList<>();
-        for (DisplayableStruct struct : diagram.heap()) {
-            if (isVisibleBox(struct.id())) {
+        for (DisplayableStruct struct : snapshot.heap()) {
+            if (isVisibleStruct(struct.id())) {
                 visibleLive.add(struct.id());
             }
         }
@@ -501,13 +503,13 @@ public class DiagramController {
 
         for (String token : order) {
             boolean ghost = ghostTokens.contains(token);
-            if (!isVisibleBox(token)) {
+            if (!isVisibleStruct(token)) {
                 continue; // statics hidden by the toggle
             }
             if (!ghost && !rendered.contains(token)) {
                 continue;
             }
-            DisplayableStruct struct = byToken.get(token);
+            DisplayableStruct struct = byId.get(token);
             if (struct == null) {
                 continue;
             }
@@ -520,13 +522,13 @@ public class DiagramController {
     }
 
     /** A box is hidden only when it is a statics class and the statics toggle is off. */
-    private boolean isVisibleBox(String token) {
+    private boolean isVisibleStruct(String token) {
         return settings.showStatics || !token.startsWith(STATICS_TOKEN_PREFIX);
     }
 
     private HeapObjectFigure buildObjectFigure(DisplayableStruct struct, boolean ghost, List<PendingRef> refs) {
         String token = struct.id();
-        ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.boxStatusOf(token));
+        ChangeStatus status = ghost ? ChangeStatus.DELETED : palette.effective(diff.structStatusOf(token));
         boolean collapsed = expansion.isObjectCollapsed(token);
         HeapObjectFigure figure = new HeapObjectFigure(struct.type(), status, collapsed, palette, fonts,
                 () -> {
@@ -555,7 +557,8 @@ public class DiagramController {
         }
         String token = struct.id();
         List<DisplayableVariable> fields = struct.variables();
-        List<String> rowKeys = MemoryDiff.rowKeys(fields); // same keying as the differ
+        // Same keying as the differ; ghost rows are uniformly DELETED, so their keys are never read.
+        List<String> rowKeys = ghost ? List.of() : MemoryDiff.rowKeys(fields);
         renderCapped("obj:" + token, fields.size(), fieldCapFor(token), i -> {
             DisplayableVariable field = fields.get(i);
             ChangeStatus status = ghost ? ChangeStatus.DELETED
@@ -576,7 +579,7 @@ public class DiagramController {
         if (token.startsWith(STATICS_TOKEN_PREFIX)) {
             return settings.maxFieldsPerObjectRendered;
         }
-        DisplayableStruct struct = byToken.get(token);
+        DisplayableStruct struct = byId.get(token);
         if (struct != null && !struct.variables().isEmpty() && "0".equals(struct.variables().get(0).label())) {
             return settings.maxArrayElementsRendered;
         }
@@ -623,7 +626,7 @@ public class DiagramController {
         }
 
         if (value instanceof Value.Reference ref) {
-            Optional<DisplayableStruct> target = diagram.resolve(ref);
+            Optional<DisplayableStruct> target = snapshot.resolve(ref);
             if (target.isEmpty()) {
                 return danglingRow(variable, status);
             }
@@ -639,8 +642,7 @@ public class DiagramController {
         VariableRowFigure row = new VariableRowFigure(variable.label(), boxTextOf(value), null, status,
                 palette, fonts);
         hover.hookRow(row); // every row hover-tints
-        row.setToolTip(tooltipLabel(typedTooltip(variable.type(),
-                value instanceof Value.Primitive primitive ? primitive.value() : "null")));
+        row.setToolTip(tooltipLabel(typedTooltip(variable.type(), Ellipsis.fullValueText(value))));
         return row;
     }
 
@@ -658,9 +660,8 @@ public class DiagramController {
 
     /** In-box text: primitives verbatim (char-capped), else empty (null cell). */
     private String boxTextOf(Value value) {
-        if (value instanceof Value.Primitive primitive) {
-            // abbreviate's width includes the marker, so +1 keeps "maxValueChars chars + …".
-            return StringUtils.abbreviate(primitive.value(), Ellipsis.ELLIPSIS, settings.maxValueChars + 1);
+        if (value instanceof Value.Primitive) {
+            return Ellipsis.valueText(value, settings.maxValueChars);
         }
         return ""; // Reference / null: an empty cell
     }
@@ -752,7 +753,7 @@ public class DiagramController {
         if (row.targetToken() == null) {
             return null;
         }
-        DisplayableStruct struct = byToken.get(row.targetToken());
+        DisplayableStruct struct = byId.get(row.targetToken());
         return struct == null ? null : new ObjectPreviewFigure(struct, palette, fonts);
     }
 
@@ -784,15 +785,21 @@ public class DiagramController {
 
     // ---------------------------------------------------------------- helpers
 
-    // The pipeline extracts one suspended thread per snapshot; the view renders that
-    // thread's stack. (A future multi-thread snapshot would need one column per thread.)
+    /**
+     * The thread whose stack this view renders — the pipeline walks exactly one
+     * suspended thread per snapshot. The single seam to widen when snapshots grow
+     * multiple threads (one stack column per thread).
+     */
+    public static Optional<DisplayableThread> renderedThread(MemorySnapshot snapshot) {
+        return snapshot.threads().stream().findFirst();
+    }
 
     private static List<DisplayableFrame> framesOf(MemorySnapshot snapshot) {
-        return snapshot.threads().isEmpty() ? List.of() : snapshot.threads().get(0).frames();
+        return renderedThread(snapshot).map(DisplayableThread::frames).orElse(List.of());
     }
 
     private static String threadNameOf(MemorySnapshot snapshot) {
-        return snapshot.threads().isEmpty() ? "?" : snapshot.threads().get(0).name();
+        return renderedThread(snapshot).map(DisplayableThread::name).orElse("?");
     }
 
     private Rectangle gutterAbsolute() {

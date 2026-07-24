@@ -85,14 +85,13 @@ public class DiffEngineTest {
         c.struct("statics:app.Config", "Class Config", //$NON-NLS-1$ //$NON-NLS-2$
                 List.of(var("host", prim("h")))); //$NON-NLS-1$ //$NON-NLS-2$
 
-        MemoryDiff d = DiffEngine.diff(null, -1, c.build());
-        assertEquals(-1L, d.baselineSequence(), "initial: baselineSequence is -1"); //$NON-NLS-1$
+        MemoryDiff d = DiffEngine.diff(null, c.build());
         assertEquals(ChangeStatus.NEW, d.frameStatusOf("f#main"), "initial: frame NEW"); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(ChangeStatus.NEW, d.variableStatusOf("f#main", "x"), "initial: variable NEW"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        assertEquals(ChangeStatus.NEW, d.boxStatusOf("1"), "initial: heap struct NEW"); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals(ChangeStatus.NEW, d.boxStatusOf("statics:app.Config"), //$NON-NLS-1$
+        assertEquals(ChangeStatus.NEW, d.structStatusOf("1"), "initial: heap struct NEW"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(ChangeStatus.NEW, d.structStatusOf("statics:app.Config"), //$NON-NLS-1$
                 "initial: statics struct NEW"); //$NON-NLS-1$
-        assertTrue(d.deletedFrames().isEmpty() && d.deletedBoxes().isEmpty()
+        assertTrue(d.deletedFrames().isEmpty() && d.deletedStructs().isEmpty()
                 && d.deletedVariables().isEmpty(), "initial: no ghosts"); //$NON-NLS-1$
     }
 
@@ -103,8 +102,8 @@ public class DiffEngineTest {
         Snap c = new Snap("thread-B"); //$NON-NLS-1$
         c.frame("f#main", "Demo.main() line 10", List.of(var("x", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
-        assertEquals(-1L, d.baselineSequence(), "thread switch: falls back to initial diff"); //$NON-NLS-1$
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
+        // Falls back to an initial diff: same frame id on both sides still reads NEW, not UNCHANGED.
         assertEquals(ChangeStatus.NEW, d.frameStatusOf("f#main"), "thread switch: frame NEW"); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(ChangeStatus.NEW, d.variableStatusOf("f#main", "x"), //$NON-NLS-1$ //$NON-NLS-2$
                 "thread switch: variable NEW"); //$NON-NLS-1$
@@ -119,14 +118,13 @@ public class DiffEngineTest {
         c.frame("f#run", "Demo.run() line 10", //$NON-NLS-1$ //$NON-NLS-2$
                 List.of(var("same", prim("1")), var("mut", prim("9")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.UNCHANGED, d.variableStatusOf("f#run", "same"), //$NON-NLS-1$ //$NON-NLS-2$
                 "var change: untouched variable UNCHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.CHANGED, d.variableStatusOf("f#run", "mut"), //$NON-NLS-1$ //$NON-NLS-2$
                 "var change: mutated variable CHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.CHANGED, d.frameStatusOf("f#run"), //$NON-NLS-1$
                 "var change: enclosing frame CHANGED"); //$NON-NLS-1$
-        assertEquals(1L, d.baselineSequence(), "var change: baselineSequence is the previous sequence"); //$NON-NLS-1$
     }
 
     @Test
@@ -137,7 +135,7 @@ public class DiffEngineTest {
         Snap c = snap();
         c.frame("f#run", "Demo.run() line 10", List.of(var("keep", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         List<DisplayableVariable> ghosts = d.deletedVariables().get("f#run"); //$NON-NLS-1$
         assertTrue(ghosts != null && ghosts.size() == 1 && ghosts.get(0).label().equals("gone"), //$NON-NLS-1$
                 "vanished var: recorded in deletedVariables under surviving frame id"); //$NON-NLS-1$
@@ -154,7 +152,7 @@ public class DiffEngineTest {
         c.frame("f#helper", "Demo.helper() line 20", List.of(var("h", prim("5")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         c.frame("f#main", "Demo.main() line 10", List.of(var("x", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.NEW, d.frameStatusOf("f#helper"), "push: pushed frame NEW"); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(ChangeStatus.NEW, d.variableStatusOf("f#helper", "h"), //$NON-NLS-1$ //$NON-NLS-2$
                 "push: pushed frame's variable NEW"); //$NON-NLS-1$
@@ -171,7 +169,7 @@ public class DiffEngineTest {
         Snap c = snap();
         c.frame("f#main", "Demo.main() line 10", List.of(var("x", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.DELETED, d.frameStatusOf("f#helper"), "pop: popped frame DELETED"); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(d.deletedFrames().size() == 1
                 && d.deletedFrames().get(0).id().equals("f#helper"), //$NON-NLS-1$
@@ -186,7 +184,7 @@ public class DiffEngineTest {
         Snap c = snap();
         c.frame("f#main", "Demo.main() line 11", List.of(var("x", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.CHANGED, d.frameStatusOf("f#main"), //$NON-NLS-1$
                 "label change: frame CHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.UNCHANGED, d.variableStatusOf("f#main", "x"), //$NON-NLS-1$ //$NON-NLS-2$
@@ -202,8 +200,8 @@ public class DiffEngineTest {
         c.struct("1", "Point", //$NON-NLS-1$ //$NON-NLS-2$
                 List.of(var("x", prim("1")), var("y", prim("3")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
-        assertEquals(ChangeStatus.CHANGED, d.boxStatusOf("1"), //$NON-NLS-1$
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
+        assertEquals(ChangeStatus.CHANGED, d.structStatusOf("1"), //$NON-NLS-1$
                 "struct field: field change => struct CHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.UNCHANGED, d.fieldStatusOf("1", "x"), //$NON-NLS-1$ //$NON-NLS-2$
                 "struct field: untouched field UNCHANGED"); //$NON-NLS-1$
@@ -220,7 +218,7 @@ public class DiffEngineTest {
         Snap c = snap();
         c.struct("1", "Sub", List.of(var("x", prim("1")), var("x", prim("9")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.UNCHANGED, d.fieldStatusOf("1", "x"), //$NON-NLS-1$ //$NON-NLS-2$
                 "shadowed: first occurrence keyed by bare label, UNCHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.CHANGED, d.fieldStatusOf("1", "x#2"), //$NON-NLS-1$ //$NON-NLS-2$
@@ -237,8 +235,8 @@ public class DiffEngineTest {
         c.struct("10", "int[3]", //$NON-NLS-1$ //$NON-NLS-2$
                 List.of(var("0", prim("1")), var("1", prim("9")), var("2", prim("3")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
-        assertEquals(ChangeStatus.CHANGED, d.boxStatusOf("10"), //$NON-NLS-1$
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
+        assertEquals(ChangeStatus.CHANGED, d.structStatusOf("10"), //$NON-NLS-1$
                 "array: element change => struct CHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.CHANGED, d.fieldStatusOf("10", "1"), //$NON-NLS-1$ //$NON-NLS-2$
                 "array: changed element's row CHANGED"); //$NON-NLS-1$
@@ -257,7 +255,7 @@ public class DiffEngineTest {
         c.reserve("B", "B"); //$NON-NLS-1$ //$NON-NLS-2$
         c.frame("f#run", "Demo.run() line 5", List.of(var("r", c.ref("B")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.CHANGED, d.variableStatusOf("f#run", "r"), //$NON-NLS-1$ //$NON-NLS-2$
                 "retarget: referring row CHANGED"); //$NON-NLS-1$
     }
@@ -271,7 +269,7 @@ public class DiffEngineTest {
         c.reserve("A", "A"); //$NON-NLS-1$ //$NON-NLS-2$
         c.frame("f#run", "Demo.run() line 5", List.of(var("r", c.ref("A")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.UNCHANGED, d.variableStatusOf("f#run", "r"), //$NON-NLS-1$ //$NON-NLS-2$
                 "same target: referring row UNCHANGED"); //$NON-NLS-1$
     }
@@ -284,7 +282,7 @@ public class DiffEngineTest {
         Snap c = snap();
         c.frame("f#run", "Demo.run() line 5", List.of(var("u", prim(UNREADABLE)))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertEquals(ChangeStatus.UNCHANGED, d.variableStatusOf("f#run", "u"), //$NON-NLS-1$ //$NON-NLS-2$
                 "unreadable: two Primitive(\"?\") compare EQUAL (no spurious change)"); //$NON-NLS-1$
     }
@@ -298,16 +296,16 @@ public class DiffEngineTest {
         Snap c = snap();
         c.struct("4", "P", List.of(var("a", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d1 = DiffEngine.diff(p.build(), 1, c.build());
-        assertEquals(ChangeStatus.UNCHANGED, d1.boxStatusOf("4"), //$NON-NLS-1$
+        MemoryDiff d1 = DiffEngine.diff(p.build(), c.build());
+        assertEquals(ChangeStatus.UNCHANGED, d1.structStatusOf("4"), //$NON-NLS-1$
                 "unexplored: stub->explored UNCHANGED"); //$NON-NLS-1$
 
         Snap p2 = snap();
         p2.struct("4", "P", List.of(var("a", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         Snap c2 = snap();
         c2.reserve("4", "P"); //$NON-NLS-1$ //$NON-NLS-2$
-        MemoryDiff d2 = DiffEngine.diff(p2.build(), 1, c2.build());
-        assertEquals(ChangeStatus.UNCHANGED, d2.boxStatusOf("4"), //$NON-NLS-1$
+        MemoryDiff d2 = DiffEngine.diff(p2.build(), c2.build());
+        assertEquals(ChangeStatus.UNCHANGED, d2.structStatusOf("4"), //$NON-NLS-1$
                 "unexplored: explored->stub UNCHANGED"); //$NON-NLS-1$
     }
 
@@ -317,10 +315,10 @@ public class DiffEngineTest {
         p.struct("3", "P", List.of(var("a", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         Snap c = snap(); // heap now empty
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
-        assertEquals(ChangeStatus.DELETED, d.boxStatusOf("3"), "deleted struct: DELETED status"); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(d.deletedBoxes().size() == 1 && d.deletedBoxes().get(0).id().equals("3"), //$NON-NLS-1$
-                "deleted struct: present in deletedBoxes exactly once"); //$NON-NLS-1$
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
+        assertEquals(ChangeStatus.DELETED, d.structStatusOf("3"), "deleted struct: DELETED status"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(d.deletedStructs().size() == 1 && d.deletedStructs().get(0).id().equals("3"), //$NON-NLS-1$
+                "deleted struct: present in deletedStructs exactly once"); //$NON-NLS-1$
     }
 
     @Test
@@ -335,8 +333,8 @@ public class DiffEngineTest {
                 var("host", prim("h")), //$NON-NLS-1$ //$NON-NLS-2$
                 var("port", prim("2")))); //$NON-NLS-1$ //$NON-NLS-2$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
-        assertEquals(ChangeStatus.CHANGED, d.boxStatusOf("statics:app.Config"), //$NON-NLS-1$
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
+        assertEquals(ChangeStatus.CHANGED, d.structStatusOf("statics:app.Config"), //$NON-NLS-1$
                 "statics: field change => struct CHANGED"); //$NON-NLS-1$
         assertEquals(ChangeStatus.CHANGED, d.fieldStatusOf("statics:app.Config", "port"), //$NON-NLS-1$ //$NON-NLS-2$
                 "statics: mutated field CHANGED"); //$NON-NLS-1$
@@ -353,10 +351,10 @@ public class DiffEngineTest {
         c.frame("f#main", "Demo.main() line 10", List.of(var("x", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         c.struct("1", "P", List.of(var("a", prim("1")))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
-        MemoryDiff d = DiffEngine.diff(p.build(), 1, c.build());
+        MemoryDiff d = DiffEngine.diff(p.build(), c.build());
         assertTrue(d.frameStatusOf("f#main") == ChangeStatus.UNCHANGED //$NON-NLS-1$
-                && d.boxStatusOf("1") == ChangeStatus.UNCHANGED //$NON-NLS-1$
-                && d.deletedFrames().isEmpty() && d.deletedBoxes().isEmpty()
+                && d.structStatusOf("1") == ChangeStatus.UNCHANGED //$NON-NLS-1$
+                && d.deletedFrames().isEmpty() && d.deletedStructs().isEmpty()
                 && d.deletedVariables().isEmpty(),
                 "identical: nothing changed and no ghosts"); //$NON-NLS-1$
     }

@@ -57,7 +57,7 @@ public class NeutralModelCutoverTest {
                 .fill(struct("P", "P #1", List.of(var("a", new Value.Primitive("1")))))
                 .build();
 
-        MemoryDiff diff = DiffEngine.diff(v1, 1, v2);
+        MemoryDiff diff = DiffEngine.diff(v1, v2);
         assertEquals(ChangeStatus.CHANGED, diff.variableStatusOf("f", "x"),
                 "second-frontend snapshot: a changed local is diffed as CHANGED with no debugger");
 
@@ -102,8 +102,8 @@ public class NeutralModelCutoverTest {
                 .fill(struct("B", "B #2", List.of()))
                 .build();
 
-        MemoryDiff diff = DiffEngine.diff(prev, 1, curr);
-        DisplayableStruct ghostA = diff.deletedBoxes().stream()
+        MemoryDiff diff = DiffEngine.diff(prev, curr);
+        DisplayableStruct ghostA = diff.deletedStructs().stream()
                 .filter(x -> x.id().equals("A")).findFirst().orElseThrow();
         Value kept = ghostA.variables().get(0).value();
         assertTrue(kept instanceof Value.Reference, "ghost A's outgoing value is still a reference");
@@ -126,8 +126,8 @@ public class NeutralModelCutoverTest {
                 .fill(struct("D", "D #9", List.of()))
                 .build();
 
-        MemoryDiff diff = DiffEngine.diff(prev, 1, curr);
-        DisplayableStruct ghostA = diff.deletedBoxes().stream()
+        MemoryDiff diff = DiffEngine.diff(prev, curr);
+        DisplayableStruct ghostA = diff.deletedStructs().stream()
                 .filter(x -> x.id().equals("A")).findFirst().orElseThrow();
         assertNull(ghostA.variables().get(0).value(),
                 "a ghost reference whose target is also gone becomes absent (empty cell, no arrow), never a wrong-struct arrow");

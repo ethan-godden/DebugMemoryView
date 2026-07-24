@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableFrame;
@@ -28,11 +29,7 @@ public final class DiffEngine {
     private DiffEngine() {
     }
 
-    /**
-     * @param prevSequence the extraction sequence {@code prev} was produced under (the snapshot
-     *                     itself no longer carries one); ignored when {@code prev} is null.
-     */
-    public static MemoryDiff diff(MemorySnapshot prev, long prevSequence, MemorySnapshot curr) {
+    public static MemoryDiff diff(MemorySnapshot prev, MemorySnapshot curr) {
         if (prev == null || !threadIds(prev).equals(threadIds(curr))) {
             return MemoryDiff.initial(curr);
         }
@@ -42,16 +39,16 @@ public final class DiffEngine {
         Map<String, List<DisplayableVariable>> deletedVariables = new HashMap<>();
         diffFrames(prev, curr, frameStatus, variableStatus, deletedFrames, deletedVariables);
 
-        Map<String, ChangeStatus> boxStatus = new HashMap<>();
+        Map<String, ChangeStatus> structStatus = new HashMap<>();
         Map<String, Map<String, ChangeStatus>> fieldStatus = new HashMap<>();
-        List<DisplayableStruct> deletedBoxes = new ArrayList<>();
-        diffHeap(prev, curr, boxStatus, fieldStatus, deletedBoxes);
+        List<DisplayableStruct> deletedStructs = new ArrayList<>();
+        diffHeap(prev, curr, structStatus, fieldStatus, deletedStructs);
 
         // Ghosts are copied verbatim from the PREVIOUS snapshot. Reference tokens are stable across
         // snapshots of one target, so a ghost's live reference already resolves against the CURRENT
         // snapshot with no coordinate remap; only a reference whose target is gone (or that was
         // already dangling) is rewritten to the absent value, so a deleted item's row renders an
-        // empty cell (no arrow) rather than a wrong-box arrow or a dangling glyph.
+        // empty cell (no arrow) rather than a wrong-struct arrow or a dangling glyph.
         List<DisplayableFrame> ghostFrames = new ArrayList<>(deletedFrames.size());
         for (DisplayableFrame f : deletedFrames) {
             ghostFrames.add(ghostFrame(f, prev, curr));
@@ -60,31 +57,23 @@ public final class DiffEngine {
         for (Map.Entry<String, List<DisplayableVariable>> e : deletedVariables.entrySet()) {
             ghostVars.put(e.getKey(), ghostVariables(e.getValue(), prev, curr));
         }
-        List<DisplayableStruct> ghostBoxes = new ArrayList<>(deletedBoxes.size());
-        for (DisplayableStruct s : deletedBoxes) {
-            ghostBoxes.add(ghostStruct(s, prev, curr));
+        List<DisplayableStruct> ghostStructs = new ArrayList<>(deletedStructs.size());
+        for (DisplayableStruct s : deletedStructs) {
+            ghostStructs.add(ghostStruct(s, prev, curr));
         }
 
-        return new MemoryDiff(prevSequence, Map.copyOf(frameStatus), Map.copyOf(variableStatus),
-                Map.copyOf(boxStatus), Map.copyOf(fieldStatus), List.copyOf(ghostFrames),
-                Map.copyOf(ghostVars), List.copyOf(ghostBoxes));
+        return new MemoryDiff(Map.copyOf(frameStatus), Map.copyOf(variableStatus),
+                Map.copyOf(structStatus), Map.copyOf(fieldStatus), List.copyOf(ghostFrames),
+                Map.copyOf(ghostVars), List.copyOf(ghostStructs));
     }
 
     private static List<String> threadIds(MemorySnapshot s) {
-        List<String> ids = new ArrayList<>(s.threads().size());
-        for (DisplayableThread t : s.threads()) {
-            ids.add(t.id());
-        }
-        return ids;
+        return s.threads().stream().map(DisplayableThread::id).toList();
     }
 
     /** All frames of a snapshot, across threads, in thread then stack order (top-of-stack first). */
     private static List<DisplayableFrame> allFrames(MemorySnapshot s) {
-        List<DisplayableFrame> frames = new ArrayList<>();
-        for (DisplayableThread t : s.threads()) {
-            frames.addAll(t.frames());
-        }
-        return frames;
+        return s.threads().stream().flatMap(t -> t.frames().stream()).toList();
     }
 
     /** A ghost reference survives only if it resolved in prev AND its target still exists in curr;
@@ -120,6 +109,39 @@ public final class DiffEngine {
         return new DisplayableFrame(f.id(), f.label(), ghostVariables(f.variables(), prev, curr), null);
     }
 
+    /** The old side's rows indexed by row key, insertion-ordered so leftovers keep their row order. */
+    private static Map<String, DisplayableVariable> byRowKey(List<DisplayableVariable> rows) {
+        Map<String, DisplayableVariable> byKey = new LinkedHashMap<>();
+        List<String> keys = MemoryDiff.rowKeys(rows);
+        for (int i = 0; i < keys.size(); i++) {
+            byKey.put(keys.get(i), rows.get(i));
+        }
+        return byKey;
+    }
+
+    /**
+     * Diffs {@code currRows} against {@code oldByKey} (consuming matches), reporting each current
+     * row's (rowKey, status) to {@code sink}. Returns true when any row is NEW or CHANGED; the
+     * entries left in {@code oldByKey} afterwards are the vanished rows.
+     */
+    private static boolean diffRows(List<DisplayableVariable> currRows,
+            Map<String, DisplayableVariable> oldByKey, MemorySnapshot curr, MemorySnapshot prev,
+            BiConsumer<String, ChangeStatus> sink) {
+        boolean changed = false;
+        List<String> keys = MemoryDiff.rowKeys(currRows);
+        for (int i = 0; i < keys.size(); i++) {
+            DisplayableVariable oldRow = oldByKey.remove(keys.get(i));
+            ChangeStatus status = oldRow == null ? ChangeStatus.NEW
+                    : valueEquals(currRows.get(i).value(), oldRow.value(), curr, prev) ? ChangeStatus.UNCHANGED
+                            : ChangeStatus.CHANGED;
+            if (status != ChangeStatus.UNCHANGED) {
+                changed = true;
+            }
+            sink.accept(keys.get(i), status);
+        }
+        return changed;
+    }
+
     private static void diffFrames(MemorySnapshot prev, MemorySnapshot curr,
             Map<String, ChangeStatus> frameStatus, Map<String, ChangeStatus> variableStatus,
             List<DisplayableFrame> deletedFrames, Map<String, List<DisplayableVariable>> deletedVariables) {
@@ -131,33 +153,19 @@ public final class DiffEngine {
 
         for (DisplayableFrame f : allFrames(curr)) {
             DisplayableFrame old = prevById.remove(f.id());
-            List<String> keys = MemoryDiff.rowKeys(f.variables());
             if (old == null) {
                 frameStatus.put(f.id(), ChangeStatus.NEW);
-                for (String key : keys) {
+                for (String key : MemoryDiff.rowKeys(f.variables())) {
                     variableStatus.put(MemoryDiff.variableKey(f.id(), key), ChangeStatus.NEW);
                 }
                 continue;
             }
-            Map<String, DisplayableVariable> oldVars = new LinkedHashMap<>();
-            List<String> oldKeys = MemoryDiff.rowKeys(old.variables());
-            for (int i = 0; i < oldKeys.size(); i++) {
-                oldVars.put(oldKeys.get(i), old.variables().get(i));
-            }
-            // The label carries the line number and the note any body string, so a step within the
-            // same frame (same id) reads as a label change here.
-            boolean changed = !equalText(f.label(), old.label()) || !equalText(f.note(), old.note());
-            for (int i = 0; i < keys.size(); i++) {
-                DisplayableVariable v = f.variables().get(i);
-                DisplayableVariable oldVar = oldVars.remove(keys.get(i));
-                ChangeStatus status = oldVar == null ? ChangeStatus.NEW
-                        : valueEquals(v.value(), oldVar.value(), curr, prev) ? ChangeStatus.UNCHANGED
-                                : ChangeStatus.CHANGED;
-                if (status != ChangeStatus.UNCHANGED) {
-                    changed = true;
-                }
-                variableStatus.put(MemoryDiff.variableKey(f.id(), keys.get(i)), status);
-            }
+            Map<String, DisplayableVariable> oldVars = byRowKey(old.variables());
+            // The label carries the line number and the note carries any body string, so a step
+            // within the same frame (same id) reads as a label change here.
+            boolean changed = !Objects.equals(f.label(), old.label()) || !Objects.equals(f.note(), old.note());
+            changed |= diffRows(f.variables(), oldVars, curr, prev,
+                    (key, status) -> variableStatus.put(MemoryDiff.variableKey(f.id(), key), status));
             if (!oldVars.isEmpty()) {
                 changed = true;
                 deletedVariables.put(f.id(), List.copyOf(oldVars.values()));
@@ -172,37 +180,32 @@ public final class DiffEngine {
     }
 
     private static void diffHeap(MemorySnapshot prev, MemorySnapshot curr,
-            Map<String, ChangeStatus> boxStatus, Map<String, Map<String, ChangeStatus>> fieldStatus,
-            List<DisplayableStruct> deletedBoxes) {
+            Map<String, ChangeStatus> structStatus, Map<String, Map<String, ChangeStatus>> fieldStatus,
+            List<DisplayableStruct> deletedStructs) {
 
+        // Insertion-ordered so the leftovers — the deleted structs — keep prev's heap order.
         Map<String, DisplayableStruct> prevById = new LinkedHashMap<>();
         for (DisplayableStruct s : prev.heap()) {
             prevById.put(s.id(), s);
         }
-        Map<String, DisplayableStruct> currById = new LinkedHashMap<>();
-        for (DisplayableStruct s : curr.heap()) {
-            currById.put(s.id(), s);
-        }
 
         for (DisplayableStruct struct : curr.heap()) {
-            DisplayableStruct old = prevById.get(struct.id());
+            DisplayableStruct old = prevById.remove(struct.id());
             if (old == null) {
-                boxStatus.put(struct.id(), ChangeStatus.NEW);
+                structStatus.put(struct.id(), ChangeStatus.NEW);
                 continue;
             }
             // Either side unexplored: contents unknown — never claim a change.
             if (!struct.explored() || !old.explored()) {
-                boxStatus.put(struct.id(), ChangeStatus.UNCHANGED);
+                structStatus.put(struct.id(), ChangeStatus.UNCHANGED);
                 continue;
             }
-            boxStatus.put(struct.id(), diffStruct(old, struct, curr, prev, fieldStatus));
+            structStatus.put(struct.id(), diffStruct(old, struct, curr, prev, fieldStatus));
         }
 
-        for (DisplayableStruct old : prev.heap()) {
-            if (!currById.containsKey(old.id())) {
-                boxStatus.put(old.id(), ChangeStatus.DELETED);
-                deletedBoxes.add(old);
-            }
+        for (DisplayableStruct gone : prevById.values()) {
+            structStatus.put(gone.id(), ChangeStatus.DELETED);
+            deletedStructs.add(gone);
         }
     }
 
@@ -211,26 +214,11 @@ public final class DiffEngine {
             Map<String, Map<String, ChangeStatus>> fieldStatus) {
 
         // The type carries neutral display info (e.g. an array's length); a change there is a change.
-        boolean changed = !equalText(old.type(), struct.type()) || old.omitted() != struct.omitted()
+        boolean changed = !Objects.equals(old.type(), struct.type()) || old.omitted() != struct.omitted()
                 || !Objects.equals(old.monitor(), struct.monitor());
         Map<String, ChangeStatus> byField = new HashMap<>();
-        Map<String, DisplayableVariable> oldFields = new LinkedHashMap<>();
-        List<String> oldKeys = MemoryDiff.rowKeys(old.variables());
-        for (int i = 0; i < oldKeys.size(); i++) {
-            oldFields.put(oldKeys.get(i), old.variables().get(i));
-        }
-        List<String> keys = MemoryDiff.rowKeys(struct.variables());
-        for (int i = 0; i < keys.size(); i++) {
-            DisplayableVariable f = struct.variables().get(i);
-            DisplayableVariable oldField = oldFields.remove(keys.get(i));
-            ChangeStatus status = oldField == null ? ChangeStatus.NEW
-                    : valueEquals(f.value(), oldField.value(), curr, prev) ? ChangeStatus.UNCHANGED
-                            : ChangeStatus.CHANGED;
-            if (status != ChangeStatus.UNCHANGED) {
-                changed = true;
-            }
-            byField.put(keys.get(i), status);
-        }
+        Map<String, DisplayableVariable> oldFields = byRowKey(old.variables());
+        changed |= diffRows(struct.variables(), oldFields, curr, prev, byField::put);
         // Vanished fields only flag the struct CHANGED; there are no ghost rows inside a struct.
         if (!oldFields.isEmpty()) {
             changed = true;
@@ -265,9 +253,5 @@ public final class DiffEngine {
             return ta.get().id().equals(tb.get().id());
         }
         return false;
-    }
-
-    private static boolean equalText(String a, String b) {
-        return a == null ? b == null : a.equals(b);
     }
 }

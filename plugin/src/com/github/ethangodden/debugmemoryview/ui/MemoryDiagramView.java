@@ -35,6 +35,7 @@ import com.github.ethangodden.debugmemoryview.core.ExtractionLimits;
 import com.github.ethangodden.debugmemoryview.core.ISnapshotConsumer;
 import com.github.ethangodden.debugmemoryview.core.SnapshotPipeline;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
+import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableThread;
 import com.github.ethangodden.debugmemoryview.model.diff.MemoryDiff;
 import com.github.ethangodden.debugmemoryview.render.DiagramController;
 
@@ -190,9 +191,9 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         }
     }
 
-    /** The rendered thread's id: a snapshot carries the one suspended thread the pipeline walked. */
+    /** The rendered thread's id; single-thread policy lives in {@link DiagramController#renderedThread}. */
     private static String threadIdOf(MemorySnapshot snapshot) {
-        return snapshot.threads().isEmpty() ? null : snapshot.threads().get(0).id();
+        return DiagramController.renderedThread(snapshot).map(DisplayableThread::id).orElse(null);
     }
 
     @Override
@@ -221,7 +222,7 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
     private void display(MemorySnapshot snapshot, MemoryDiff diff) {
         displayed = snapshot;
         controller.setRunning(false);
-        controller.setSnapshot(snapshot, diff != null ? diff : MemoryDiff.initial(snapshot));
+        controller.setSnapshot(snapshot, diff); // setSnapshot defaults a null diff to initial
         pageBook.showPage(canvas);
     }
 
