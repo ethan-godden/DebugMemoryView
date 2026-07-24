@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 import java.util.function.IntFunction;
 
 import org.apache.commons.lang3.StringUtils;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.draw2d.ConnectionLayer;
 import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.FigureCanvas;
@@ -204,7 +205,7 @@ public class DiagramController {
     }
 
     /** Full rebuild; caches (snapshot, diff) so refresh()/toggles can re-render. */
-    public void setSnapshot(MemorySnapshot newSnapshot, MemoryDiff newDiff) {
+    public void setSnapshot(MemorySnapshot newSnapshot, @Nullable MemoryDiff newDiff) {
         snapshot = newSnapshot;
         diff = newDiff != null ? newDiff : MemoryDiff.initial(newSnapshot);
         rebuild();

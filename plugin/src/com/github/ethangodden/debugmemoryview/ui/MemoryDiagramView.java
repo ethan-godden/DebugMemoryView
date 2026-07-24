@@ -6,6 +6,7 @@ import java.util.function.IntConsumer;
 import org.eclipse.debug.ui.DebugUITools;
 import org.eclipse.debug.ui.IDebugUIConstants;
 import org.eclipse.draw2d.FigureCanvas;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.IMenuManager;
@@ -76,7 +77,7 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
     private MemoryDiff pendingDiff;
 
     @Override
-    public void init(IViewSite site, IMemento memento) throws PartInitException {
+    public void init(IViewSite site, @Nullable IMemento memento) throws PartInitException {
         super.init(site, memento);
         settings.restore(memento);
     }

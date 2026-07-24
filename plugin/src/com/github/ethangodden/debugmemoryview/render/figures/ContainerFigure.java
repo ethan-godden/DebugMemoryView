@@ -7,6 +7,7 @@ import org.eclipse.draw2d.IFigure;
 import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.LineBorder;
 import org.eclipse.draw2d.ToolbarLayout;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.graphics.Color;
 
@@ -34,7 +35,7 @@ public class ContainerFigure extends Figure {
     private final boolean ghost;
 
     public ContainerFigure(String title, ChangeStatus status, boolean expanded,
-            ColorPalette palette, FontKit fonts, Runnable onToggle) {
+            ColorPalette palette, FontKit fonts, @Nullable Runnable onToggle) {
         this.palette = palette;
         this.status = status;
         ghost = status == ChangeStatus.DELETED;

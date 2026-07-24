@@ -3,6 +3,7 @@ package com.github.ethangodden.debugmemoryview.render;
 import org.eclipse.draw2d.Figure;
 import org.eclipse.draw2d.Graphics;
 import org.eclipse.draw2d.geometry.Rectangle;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.swt.graphics.Color;
 
 /**
@@ -14,9 +15,9 @@ import org.eclipse.swt.graphics.Color;
  */
 public class SashFigure extends Figure {
 
-    private Color lineColor;
+    private @Nullable Color lineColor;
 
-    public void setLineColor(Color lineColor) {
+    public void setLineColor(@Nullable Color lineColor) {
         this.lineColor = lineColor;
         repaint();
     }

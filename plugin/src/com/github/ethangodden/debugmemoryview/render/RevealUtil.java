@@ -2,6 +2,7 @@ package com.github.ethangodden.debugmemoryview.render;
 
 import org.eclipse.draw2d.ConnectionAnchor;
 import org.eclipse.draw2d.IFigure;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.draw2d.ScrollPane;
 import org.eclipse.draw2d.Viewport;
 import org.eclipse.draw2d.ViewportUtilities;
@@ -25,7 +26,7 @@ public final class RevealUtil {
     }
 
     /** True when the anchor's reference point lies inside its enclosing viewport's visible area. */
-    public static boolean endpointVisible(ConnectionAnchor anchor) {
+    public static boolean endpointVisible(@Nullable ConnectionAnchor anchor) {
         if (anchor == null || anchor.getOwner() == null) {
             return true;
         }

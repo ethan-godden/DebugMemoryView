@@ -1,5 +1,6 @@
 package com.github.ethangodden.debugmemoryview;
 
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
 import org.osgi.framework.BundleContext;
 
@@ -12,7 +13,7 @@ public class Activator extends AbstractUIPlugin {
 	public static final String PLUGIN_ID = "DebugMemoryView"; //$NON-NLS-1$
 
 	// The shared instance
-	private static Activator plugin;
+	private static @Nullable Activator plugin;
 	
 	/**
 	 * The constructor
@@ -33,11 +34,11 @@ public class Activator extends AbstractUIPlugin {
 	}
 
 	/**
-	 * Returns the shared instance
+	 * Returns the shared instance, or null before {@link #start} / after {@link #stop}.
 	 *
 	 * @return the shared instance
 	 */
-	public static Activator getDefault() {
+	public static @Nullable Activator getDefault() {
 		return plugin;
 	}
 

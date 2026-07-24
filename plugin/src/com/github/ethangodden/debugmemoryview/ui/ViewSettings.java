@@ -1,5 +1,6 @@
 package com.github.ethangodden.debugmemoryview.ui;
 
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.ui.IMemento;
 
 /** Per-view render settings, persisted via the view memento. */
@@ -23,7 +24,7 @@ public final class ViewSettings {
         memento.putBoolean("highlightChanges", highlightChanges);
     }
 
-    public void restore(IMemento memento) {
+    public void restore(@Nullable IMemento memento) {
         if (memento == null) {
             return;
         }

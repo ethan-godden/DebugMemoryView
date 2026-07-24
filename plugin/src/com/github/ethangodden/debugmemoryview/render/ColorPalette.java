@@ -1,5 +1,6 @@
 package com.github.ethangodden.debugmemoryview.render;
 
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.preference.PreferenceConverter;
 import org.eclipse.jface.resource.ResourceManager;
@@ -94,7 +95,7 @@ public final class ColorPalette {
     }
 
     /** Row background tint; null for statuses without one. */
-    public Color rowTint(ChangeStatus status) {
+    public @Nullable Color rowTint(ChangeStatus status) {
         return switch (status) {
             case NEW -> newTint;
             case CHANGED -> changedTint;
@@ -103,7 +104,7 @@ public final class ColorPalette {
     }
 
     /** Stripe accent for the row border; null (no stripe) for UNCHANGED. */
-    public Color stripe(ChangeStatus status) {
+    public @Nullable Color stripe(ChangeStatus status) {
         return status == ChangeStatus.UNCHANGED ? null : statusForeground(status);
     }
 

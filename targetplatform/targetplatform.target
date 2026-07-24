@@ -12,6 +12,8 @@
       <unit id="org.eclipse.jdt.debug" version="0.0.0"/>
       <unit id="org.eclipse.draw2d" version="0.0.0"/>
       <unit id="org.eclipse.jface" version="0.0.0"/>
+      <!-- @NonNull/@Nullable annotations (org.eclipse.jdt.annotation), CLASS retention only. -->
+      <unit id="org.eclipse.jdt.annotation" version="0.0.0"/>
       <!-- Apache Commons Lang, published in the release train (Orbit). StringUtils.abbreviate. -->
       <unit id="org.apache.commons.lang3" version="0.0.0"/>
       <!-- Boots the Equinox OSGi runtime that tycho-surefire launches for the tests. -->

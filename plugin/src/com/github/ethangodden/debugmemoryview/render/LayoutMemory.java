@@ -4,6 +4,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 /**
  * Sticky heap-diagram order keys that survive full figure rebuilds so boxes
  * never jump between debugger steps. Cleared when a new debug session starts.
@@ -24,7 +26,7 @@ public final class LayoutMemory {
     }
 
     /** The remembered orderKey, or null for a token never assigned (or evicted). */
-    public Long orderKeyOf(String token) {
+    public @Nullable Long orderKeyOf(String token) {
         return orderKeys.get(token);
     }
 

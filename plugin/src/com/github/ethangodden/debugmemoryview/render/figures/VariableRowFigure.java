@@ -9,6 +9,7 @@ import org.eclipse.draw2d.MarginBorder;
 import org.eclipse.draw2d.PositionConstants;
 import org.eclipse.draw2d.geometry.Dimension;
 import org.eclipse.draw2d.geometry.Rectangle;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.swt.graphics.Color;
 
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
@@ -42,14 +43,14 @@ public class VariableRowFigure extends Figure {
      */
     private static final int BOX_KEEP_MAX = 120;
 
-    private final String targetToken; // null for primitives / null refs / dangling / unreadables
+    private final @Nullable String targetToken; // null for primitives / null refs / dangling / unreadables
     private final ChangeStatus status;
-    private final Label nameLabel; // null for box-only rows
+    private final @Nullable Label nameLabel; // null for box-only rows
     private final ValueBoxFigure valueBox;
-    private final Color baseBackground; // null when the row has no tint
+    private final @Nullable Color baseBackground; // null when the row has no tint
 
-    public VariableRowFigure(String name, String boxText, String targetToken, ChangeStatus status,
-            ColorPalette palette, FontKit fonts) {
+    public VariableRowFigure(@Nullable String name, @Nullable String boxText, @Nullable String targetToken,
+            ChangeStatus status, ColorPalette palette, FontKit fonts) {
         this.targetToken = targetToken;
         this.status = status;
         setLayoutManager(new RowLayout());
@@ -74,7 +75,7 @@ public class VariableRowFigure extends Figure {
     }
 
     /** The target heap box token this reference row points at, or null (non-reference row). */
-    public String targetToken() {
+    public @Nullable String targetToken() {
         return targetToken;
     }
 

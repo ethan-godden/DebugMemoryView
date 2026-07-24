@@ -9,6 +9,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 
+import org.eclipse.jdt.annotation.Nullable;
+
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableFrame;
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.DisplayableStruct;
@@ -29,7 +31,7 @@ public final class DiffEngine {
     private DiffEngine() {
     }
 
-    public static MemoryDiff diff(MemorySnapshot prev, MemorySnapshot curr) {
+    public static MemoryDiff diff(@Nullable MemorySnapshot prev, MemorySnapshot curr) {
         if (prev == null || !threadIds(prev).equals(threadIds(curr))) {
             return MemoryDiff.initial(curr);
         }
@@ -234,7 +236,7 @@ public final class DiffEngine {
      * strings match; two references are equal iff they resolve to the same target struct (both
      * dangling counts as equal); a primitive never equals a reference or absent.
      */
-    static boolean valueEquals(Value a, Value b, MemorySnapshot da, MemorySnapshot db) {
+    static boolean valueEquals(@Nullable Value a, @Nullable Value b, MemorySnapshot da, MemorySnapshot db) {
         if (a == null || b == null) {
             return a == b;
         }

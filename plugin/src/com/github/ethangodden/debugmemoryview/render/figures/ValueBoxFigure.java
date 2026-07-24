@@ -5,6 +5,7 @@ import org.eclipse.draw2d.Label;
 import org.eclipse.draw2d.LineBorder;
 import org.eclipse.draw2d.MarginBorder;
 import org.eclipse.draw2d.PositionConstants;
+import org.eclipse.jdt.annotation.Nullable;
 
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
 import com.github.ethangodden.debugmemoryview.render.ColorPalette;
@@ -25,7 +26,7 @@ public class ValueBoxFigure extends Label {
 
     public static final int MIN_WIDTH = 40;
 
-    public ValueBoxFigure(String text, ChangeStatus status, ColorPalette palette, FontKit fonts) {
+    public ValueBoxFigure(@Nullable String text, ChangeStatus status, ColorPalette palette, FontKit fonts) {
         super(text == null ? "" : text);
         setLabelAlignment(PositionConstants.CENTER);
         setFont(status == ChangeStatus.DELETED ? fonts.deleted() : fonts.name());

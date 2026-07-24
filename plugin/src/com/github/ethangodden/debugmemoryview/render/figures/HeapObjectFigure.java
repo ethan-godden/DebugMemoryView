@@ -2,6 +2,7 @@ package com.github.ethangodden.debugmemoryview.render.figures;
 
 import org.eclipse.draw2d.IFigure;
 import org.eclipse.draw2d.geometry.Dimension;
+import org.eclipse.jdt.annotation.Nullable;
 
 import com.github.ethangodden.debugmemoryview.model.diff.ChangeStatus;
 import com.github.ethangodden.debugmemoryview.render.ColorPalette;
@@ -25,12 +26,12 @@ public class HeapObjectFigure extends ContainerFigure {
     private boolean hoverHighlight;
 
     public HeapObjectFigure(String title, ChangeStatus status, boolean collapsed,
-            ColorPalette palette, FontKit fonts, Runnable onToggle) {
+            ColorPalette palette, FontKit fonts, @Nullable Runnable onToggle) {
         super(title, status, !collapsed, palette, fonts, onToggle);
     }
 
-    /** Tooltip on the header label (STRING boxes: the full quoted content). */
-    public void setHeaderToolTip(IFigure tip) {
+    /** Tooltip on the header label (STRING boxes: the full quoted content); null clears it. */
+    public void setHeaderToolTip(@Nullable IFigure tip) {
         header.setToolTip(tip);
     }
 

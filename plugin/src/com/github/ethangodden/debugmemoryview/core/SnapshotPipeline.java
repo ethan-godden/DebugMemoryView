@@ -14,6 +14,7 @@ import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.debug.core.DebugException;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
@@ -82,7 +83,7 @@ public final class SnapshotPipeline {
 
     // ---- triggers (UI thread / debug event dispatch thread; no JDI wire calls) ----
 
-    public void trigger(IJavaThread thread) {
+    public void trigger(@Nullable IJavaThread thread) {
         if (thread == null) {
             return;
         }
@@ -94,7 +95,7 @@ public final class SnapshotPipeline {
     }
 
     /** Raw SUSPEND event; matters when the Debug view is closed. Debounce dedupes vs the context event. */
-    public void suspendFallback(IJavaThread thread) {
+    public void suspendFallback(@Nullable IJavaThread thread) {
         trigger(thread);
     }
 
@@ -186,7 +187,7 @@ public final class SnapshotPipeline {
 
     // ---- configuration / lifecycle ----------------------------------------
 
-    public void addConsumer(ISnapshotConsumer consumer) {
+    public void addConsumer(@Nullable ISnapshotConsumer consumer) {
         if (consumer != null) {
             consumers.addIfAbsent(consumer);
         }
@@ -197,7 +198,7 @@ public final class SnapshotPipeline {
     }
 
     /** Applied on the next extraction; in-flight runs keep the limits they started with. */
-    public void setLimits(ExtractionLimits newLimits) {
+    public void setLimits(@Nullable ExtractionLimits newLimits) {
         if (newLimits != null) {
             this.limits = newLimits;
         }
