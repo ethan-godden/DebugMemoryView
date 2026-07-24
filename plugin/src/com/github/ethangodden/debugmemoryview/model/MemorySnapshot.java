@@ -50,6 +50,15 @@ public final class MemorySnapshot {
 		return threads;
 	}
 
+	/**
+	 * The thread whose stack the view renders — the pipeline walks exactly one suspended thread
+	 * per snapshot. The single seam to widen when snapshots grow multiple threads (one stack
+	 * column per thread).
+	 */
+	public Optional<DisplayableThread> renderedThread() {
+		return threads.stream().findFirst();
+	}
+
 	/** Every heap struct (statics classes included), in discovery order. */
 	public List<DisplayableStruct> heap() {
 		return heap;

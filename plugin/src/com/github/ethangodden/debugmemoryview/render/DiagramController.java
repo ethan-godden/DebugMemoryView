@@ -786,21 +786,12 @@ public class DiagramController {
 
     // ---------------------------------------------------------------- helpers
 
-    /**
-     * The thread whose stack this view renders — the pipeline walks exactly one
-     * suspended thread per snapshot. The single seam to widen when snapshots grow
-     * multiple threads (one stack column per thread).
-     */
-    public static Optional<DisplayableThread> renderedThread(MemorySnapshot snapshot) {
-        return snapshot.threads().stream().findFirst();
-    }
-
     private static List<DisplayableFrame> framesOf(MemorySnapshot snapshot) {
-        return renderedThread(snapshot).map(DisplayableThread::frames).orElse(List.of());
+        return snapshot.renderedThread().map(DisplayableThread::frames).orElse(List.of());
     }
 
     private static String threadNameOf(MemorySnapshot snapshot) {
-        return renderedThread(snapshot).map(DisplayableThread::name).orElse("?");
+        return snapshot.renderedThread().map(DisplayableThread::name).orElse("?");
     }
 
     private Rectangle gutterAbsolute() {

@@ -192,9 +192,9 @@ public class MemoryDiagramView extends ViewPart implements ISnapshotConsumer {
         }
     }
 
-    /** The rendered thread's id; single-thread policy lives in {@link DiagramController#renderedThread}. */
+    /** The rendered thread's id; single-thread policy lives in {@link MemorySnapshot#renderedThread}. */
     private static String threadIdOf(MemorySnapshot snapshot) {
-        return DiagramController.renderedThread(snapshot).map(DisplayableThread::id).orElse(null);
+        return snapshot.renderedThread().map(DisplayableThread::id).orElse(null);
     }
 
     @Override
