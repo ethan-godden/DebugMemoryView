@@ -238,7 +238,7 @@ public final class SnapshotExtractor {
     private Value convert(IJavaValue value, int depth) {
         try {
             if (value == null || value.isNull()) {
-                return null; // absent/null value
+                return Value.NullValue.INSTANCE; // the debuggee's null
             }
             if (value instanceof IJavaPrimitiveValue) {
                 return new Value.Primitive(value.getValueString());
@@ -472,10 +472,10 @@ public final class SnapshotExtractor {
         String header = simple + " #" + pending.id(); //$NON-NLS-1$
         List<DisplayableVariable> boxFields;
         if (isEnum && enumConstantName != null) {
-            // A synthetic leading box-only field: label is the constant name, value absent.
+            // A synthetic leading box-only field: label is the constant name, value unused.
             boxFields = new ArrayList<>(fields.size() + 1);
             // type is null (not "") so the renderer recognizes this as a box-only row.
-            boxFields.add(new DisplayableVariable(enumConstantName, null, null));
+            boxFields.add(new DisplayableVariable(enumConstantName, null, Value.NullValue.INSTANCE));
             boxFields.addAll(fields);
         } else {
             boxFields = fields;

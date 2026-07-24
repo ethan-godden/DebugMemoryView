@@ -2,7 +2,6 @@ package com.github.ethangodden.debugmemoryview.tests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -173,11 +172,11 @@ public class MemorySnapshotBuilderTest {
 
     // ---------- values ----------
     @Test
-    void testAbsentValueIsNull() {
+    void testAbsentValueIsNullValue() {
         MemorySnapshot d = builder()
-                .thread(thread(frame("f0", "Demo.main()", List.of(var("n", null)))))
+                .thread(thread(frame("f0", "Demo.main()", List.of(var("n", Value.NullValue.INSTANCE)))))
                 .build();
         DisplayableVariable v = d.threads().get(0).frames().get(0).variables().get(0);
-        assertNull(v.value(), "an absent/uninitialized value is represented as a null Value");
+        assertEquals(Value.NullValue.INSTANCE, v.value(), "an absent/uninitialized value is a NullValue");
     }
 }

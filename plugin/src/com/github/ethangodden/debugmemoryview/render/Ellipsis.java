@@ -1,7 +1,6 @@
 package com.github.ethangodden.debugmemoryview.render;
 
 import org.apache.commons.lang3.StringUtils;
-import org.eclipse.jdt.annotation.Nullable;
 
 import com.github.ethangodden.debugmemoryview.model.MemorySnapshot.Value;
 
@@ -15,21 +14,19 @@ public final class Ellipsis {
 
     /**
      * Display text of a value, char-capped. A {@link Value.Primitive} renders its string; a
-     * reference renders "→" (the arrow carries the target) and the absent/null value renders "null".
+     * reference renders "→" (the arrow carries the target) and {@link Value.NullValue} renders "null".
      */
-    public static String valueText(@Nullable Value value, int maxChars) {
+    public static String valueText(Value value, int maxChars) {
         // abbreviate's width includes the marker, so maxChars + 1 keeps "maxChars chars + …".
         return StringUtils.abbreviate(fullValueText(value), ELLIPSIS, maxChars + 1);
     }
 
     /** Untruncated display text of a value (tooltips / previews). */
-    public static String fullValueText(@Nullable Value value) {
-        if (value == null) {
-            return "null";
-        }
-        if (value instanceof Value.Primitive primitive) {
-            return primitive.value();
-        }
-        return "→"; // Reference: the arrow carries the target
+    public static String fullValueText(Value value) {
+        return switch (value) {
+            case Value.Primitive primitive -> primitive.value();
+            case Value.NullValue() -> "null";
+            case Value.Reference reference -> "→"; // the arrow carries the target
+        };
     }
 }

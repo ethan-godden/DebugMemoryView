@@ -69,13 +69,19 @@ public final class MemorySnapshot {
 		return Optional.ofNullable(heapById.get(ref.target));
 	}
 
-	/**
-	 * What a variable holds. See {@link DisplayableVariable} for the null
-	 * convention.
-	 */
+	/** What a variable holds: a display string, the debuggee's null, or a handle to a struct. */
 	public sealed interface Value {
 
 		record Primitive(String value) implements Value {}
+
+		/**
+		 * The debuggee's null — a real {@code Value}, so {@link DisplayableVariable#value} is never
+		 * Java {@code null}.
+		 */
+		record NullValue() implements Value {
+			/** The single instance; every occurrence is interchangeable. */
+			public static final NullValue INSTANCE = new NullValue();
+		}
 
 		/**
 		 * Opaque handle to a struct; meaningless except via
@@ -101,9 +107,10 @@ public final class MemorySnapshot {
 	}
 
 	/**
-	 * One row in a frame or struct. A null {@code value} means the variable holds
-	 * null; a row with {@code type} and {@code value} both null is display-only
-	 * content (e.g. an enum constant name).
+	 * One row in a frame or struct. {@code value} is never Java {@code null} — the debuggee's null
+	 * is {@link Value.NullValue#INSTANCE}. A null {@code type} marks a display-only content row
+	 * (e.g. an enum constant name), whose {@code value} is unused (conventionally
+	 * {@link Value.NullValue#INSTANCE}).
 	 */
 	public record DisplayableVariable(String label, String type, Value value) {}
 

@@ -2,7 +2,6 @@ package com.github.ethangodden.debugmemoryview.tests;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -65,24 +64,24 @@ public class NeutralModelCutoverTest {
         assertEquals(List.of("P"), order, "second-frontend snapshot: the layouter orders its struct ids");
     }
 
-    // ---------- dangling vs null vs live reference are distinct in the model ----------
+    // ---------- dangling vs NullValue vs live reference are distinct in the model ----------
     @Test
-    void testDanglingNullAndLiveReferenceAreDistinct() {
+    void testDanglingNullValueAndLiveReferenceAreDistinct() {
         MemorySnapshot.Builder b = MemorySnapshot.builder("t");
         Value.Reference live = b.reference("R");
         Value.Reference dangling = b.reference("ghost"); // never provided
         b.thread(thread(frame("f", List.of(
                 var("live", live),
-                var("absent", null),
+                var("absent", Value.NullValue.INSTANCE),
                 var("dangling", dangling)))));
         b.fill(struct("R", "R #1", List.of()));
         MemorySnapshot d = b.build();
 
         assertTrue(d.resolve(live).isPresent(), "a live reference resolves to its target struct");
-        assertNull(d.threads().get(0).frames().get(0).variables().get(1).value(),
-                "the absent value is a null Value (not a reference)");
+        assertEquals(Value.NullValue.INSTANCE, d.threads().get(0).frames().get(0).variables().get(1).value(),
+                "the absent value is a NullValue (not a reference)");
         assertTrue(d.resolve(dangling).isEmpty(),
-                "a dangling reference resolves to nothing, distinct from null and from a live reference");
+                "a dangling reference resolves to nothing, distinct from NullValue and from a live reference");
     }
 
     // ---------- ghost references stay live for surviving targets ----------
@@ -129,8 +128,8 @@ public class NeutralModelCutoverTest {
         MemoryDiff diff = DiffEngine.diff(prev, curr);
         DisplayableStruct ghostA = diff.deletedStructs().stream()
                 .filter(x -> x.id().equals("A")).findFirst().orElseThrow();
-        assertNull(ghostA.variables().get(0).value(),
-                "a ghost reference whose target is also gone becomes absent (empty cell, no arrow), never a wrong-struct arrow");
+        assertEquals(Value.NullValue.INSTANCE, ghostA.variables().get(0).value(),
+                "a ghost reference whose target is also gone becomes a NullValue (empty cell, no arrow), never a wrong-struct arrow");
     }
 
     // ---------- an unexplored (stub) struct never resolves as dangling ----------

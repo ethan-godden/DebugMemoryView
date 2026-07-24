@@ -23,7 +23,7 @@ import com.github.ethangodden.debugmemoryview.render.FontKit;
  * the cached snapshot — lets the user read what an arrow points to without
  * scrolling the heap pane. Uniform over the neutral {@link DisplayableStruct}:
  * each field renders "label = value", box-only fields (enum constant marker,
- * value==null, no type) render just their label, and an unexplored struct shows
+ * no type) render just their label, and an unexplored struct shows
  * a single "(not explored)" line.
  */
 public class ObjectPreviewFigure extends Figure {
@@ -75,11 +75,10 @@ public class ObjectPreviewFigure extends Figure {
 
     /** "label = value", or just the label for a box-only field (enum constant marker). */
     private static String lineOf(DisplayableVariable field) {
-        Value value = field.value();
-        if (value == null && field.type() == null) {
+        if (field.type() == null) {
             return field.label(); // box-only content row (enum constant name)
         }
-        return field.label() + " = " + Ellipsis.valueText(value, MAX_LINE_CHARS);
+        return field.label() + " = " + Ellipsis.valueText(field.value(), MAX_LINE_CHARS);
     }
 
     private static Label bodyLine(String text, ColorPalette palette, FontKit fonts) {

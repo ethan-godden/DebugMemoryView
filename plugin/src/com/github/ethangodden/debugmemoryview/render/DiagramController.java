@@ -618,9 +618,9 @@ public class DiagramController {
         Value value = variable.value();
 
         // Box-only content row: the enum constant marker arrives as a leading field
-        // with value==null and no declared type. Its label is the content shown
-        // in the box (no label, no arrow), mirroring the old enum-constant/boxed row.
-        if (value == null && variable.type() == null) {
+        // with no declared type. Its label is the content shown in the box (no label,
+        // no arrow), mirroring the old enum-constant/boxed row.
+        if (variable.type() == null) {
             VariableRowFigure row = new VariableRowFigure(null, variable.label(), null, status, palette, fonts);
             hover.hookRow(row);
             return row;
@@ -639,7 +639,7 @@ public class DiagramController {
             return row;
         }
 
-        // Primitive or absent/null value: an empty cell (primitives fill it), no arrow.
+        // Primitive or NullValue: an empty cell (primitives fill it), no arrow.
         VariableRowFigure row = new VariableRowFigure(variable.label(), boxTextOf(value), null, status,
                 palette, fonts);
         hover.hookRow(row); // every row hover-tints
@@ -659,12 +659,12 @@ public class DiagramController {
         return row;
     }
 
-    /** In-box text: primitives verbatim (char-capped), else empty (null cell). */
+    /** In-box text: primitives verbatim (char-capped), else empty (reference / null cell). */
     private String boxTextOf(Value value) {
         if (value instanceof Value.Primitive) {
             return Ellipsis.valueText(value, settings.maxValueChars);
         }
-        return ""; // Reference / null: an empty cell
+        return ""; // Reference / NullValue: an empty cell
     }
 
     private static String typedTooltip(String declaredTypeName, String fullValue) {

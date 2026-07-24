@@ -79,13 +79,14 @@ public final class DiffEngine {
     }
 
     /** A ghost reference survives only if it resolved in prev AND its target still exists in curr;
-     * otherwise it becomes the absent value (empty cell, no arrow). Non-references pass through. */
+     * otherwise it becomes {@link Value.NullValue} (empty cell, no arrow). Non-references pass
+     * through. */
     private static Value ghostValue(Value v, MemorySnapshot prev, MemorySnapshot curr) {
         if (!(v instanceof Value.Reference ref)) {
             return v;
         }
         if (prev.resolve(ref).isEmpty() || curr.resolve(ref).isEmpty()) {
-            return null;
+            return Value.NullValue.INSTANCE;
         }
         return ref;
     }
@@ -232,28 +233,23 @@ public final class DiffEngine {
     }
 
     /**
-     * Values compare so that: two absent (null) values are equal; two primitives are equal iff their
-     * strings match; two references are equal iff they resolve to the same target struct (both
-     * dangling counts as equal); a primitive never equals a reference or absent.
+     * Values compare so that: two {@link Value.NullValue}s are always equal; two primitives are
+     * equal iff their strings match; two references are equal iff they resolve to the same target
+     * struct (both dangling counts as equal); different kinds of {@link Value} are never equal.
      */
-    static boolean valueEquals(@Nullable Value a, @Nullable Value b, MemorySnapshot da, MemorySnapshot db) {
-        if (a == null || b == null) {
-            return a == b;
-        }
-        if (a instanceof Value.Primitive pa) {
-            return b instanceof Value.Primitive pb && pa.value().equals(pb.value());
-        }
-        if (a instanceof Value.Reference ra) {
-            if (!(b instanceof Value.Reference rb)) {
-                return false;
+    static boolean valueEquals(Value a, Value b, MemorySnapshot da, MemorySnapshot db) {
+        return switch (a) {
+            case Value.Primitive pa -> b instanceof Value.Primitive pb && pa.value().equals(pb.value());
+            case Value.NullValue() -> b instanceof Value.NullValue;
+            case Value.Reference ra -> {
+                if (!(b instanceof Value.Reference rb)) {
+                    yield false;
+                }
+                Optional<DisplayableStruct> ta = da.resolve(ra);
+                Optional<DisplayableStruct> tb = db.resolve(rb);
+                // both dangling -> equal
+                yield ta.isEmpty() || tb.isEmpty() ? ta.isEmpty() && tb.isEmpty() : ta.get().id().equals(tb.get().id());
             }
-            Optional<DisplayableStruct> ta = da.resolve(ra);
-            Optional<DisplayableStruct> tb = db.resolve(rb);
-            if (ta.isEmpty() || tb.isEmpty()) {
-                return ta.isEmpty() && tb.isEmpty(); // both dangling -> equal
-            }
-            return ta.get().id().equals(tb.get().id());
-        }
-        return false;
+        };
     }
 }
