@@ -15,7 +15,8 @@ deleted items render exactly once as translucent "ghosts".
   root package `com.github.ethangodden.debugmemoryview`). Built manifest-first by
   Tycho against the Eclipse 4.40 / 2026-06 target platform.
 - `tests/` — an `eclipse-test-plugin` **fragment** of the plug-in with JUnit 5
-  suites (`DiffEngineTest`, `HeapLayouterTest`, `ColumnsLayoutTest`); a fragment so the
+  suites (`DiffEngineTest`, `HeapLayouterTest`, `MemorySnapshotBuilderTest`,
+  `NeutralModelCutoverTest`, `ColumnsLayoutTest`); a fragment so the
   tests reach the plug-in's *internal* `model`/`render` packages without exporting them.
   They stay JDK-only, except `ColumnsLayoutTest` which drives bare Draw2d figures (nothing
   paints).
@@ -69,32 +70,37 @@ with `runtime-EclipseApplication/` as the runtime workspace, debug a small Java 
 ## Architecture
 
 Data flows one way. The model is **platform-agnostic**: the Eclipse/JDT extractor feeds a
-`MemoryDiagramBuilder` and the diff/render layers read only the neutral `MemoryDiagram`, so a
+`MemorySnapshot.Builder` and the diff/render layers read only the neutral `MemorySnapshot`, so a
 future editor/language frontend needs only a new builder-feeding adapter.
 
 ```
-DebugContextTracker → SnapshotPipeline → SnapshotExtractor → MemoryDiagramBuilder → MemoryDiagram
-        (listeners)      (debounced Job)   (JDI walk, adapter)     (ingestion)         (immutable)
-                                                                                            │
+DebugContextTracker → SnapshotPipeline → SnapshotExtractor → MemorySnapshot.Builder → MemorySnapshot
+        (listeners)      (debounced Job)   (JDI walk, adapter)       (ingestion)         (immutable)
+                                                                                              │
 MemoryDiagramView ← DiagramController ← MemoryDiff ← DiffEngine ←────────────────────────────┘
       (ViewPart)      (Draw2d figures)     (per-thread baseline diff)
 ```
 
 Packages below sit under the root `com.github.ethangodden.debugmemoryview`.
 
-- `model` — immutable, JDK-only neutral records + the `MemoryDiagramBuilder` (sole ingestion
-  point). A `MemoryDiagram` is STACK `Frame`s + HEAP `Box`es (statics classes are HEAP boxes); a
-  `Box` is a uniform header + ordered `Variable` fields (arrays/strings/boxed/enums are all fields,
-  with `explored`/`omittedCount` hints). Identity is an opaque token (box/frame token, variable/field
-  symbol id) — never a JVM id. A `Value` is `Primitive | Reference` (or `null` = the absent/null
-  value); a `Reference(section, index)` addresses a cell (an index into a section's rows) and resolves
-  to a `Box` or to nothing (a **dangling pointer**). `model.diff` computes `MemoryDiff` from two
-  diagrams; ghosts carry full models copied from the previous diagram, with their references remapped
-  into the current diagram's coordinates.
+- `model` — a single immutable, JDK-only file, `MemorySnapshot.java`: the platform-agnostic
+  neutral model plus its own `Builder` (sole ingestion point, and the only minter of
+  `Value.Reference`s). A `MemorySnapshot` is `DisplayableThread`s (each a call stack of
+  `DisplayableFrame`s, top-of-stack first) sharing one heap of `DisplayableStruct`s (statics classes
+  are heap structs too, in discovery order). A `DisplayableStruct`/`DisplayableFrame` holds ordered
+  `DisplayableVariable` rows (label/type/value), with `explored`/`omitted` hints on structs. Identity
+  is an opaque id (struct id, frame id, thread id) — never a JVM id. A `Value` is
+  `Primitive | Reference` (or `null` = the absent/null value); a `Reference` is an opaque token,
+  scoped to the snapshot's `targetId`, resolved only via `MemorySnapshot#resolve` to a
+  `DisplayableStruct` or to nothing (a **dangling pointer**). `model.diff` computes `MemoryDiff` from
+  two snapshots; a row's cross-snapshot identity is `MemoryDiff.rowKeys()` (its label, disambiguated
+  by occurrence index — rows carry no separate symbol id). Ghosts carry full models copied from the
+  previous snapshot, with references left as-is (tokens are stable across snapshots of one target)
+  except when their target is gone, which rewrites them to the absent value.
 - `core` — `DebugContextTracker` (debug-context + debug-event
   listeners), `SnapshotPipeline` (debounce, per-thread baselines, suspend
-  generations, publish gating), `core.extract.SnapshotExtractor` (the JDI walk, now the JDT→builder
-  adapter that feeds `MemoryDiagramBuilder`; stub-first BFS with caps from `ExtractionLimits`).
+  generations, publish gating), `core.extract.SnapshotExtractor` (the JDI walk, the JDT→builder
+  adapter that feeds `MemorySnapshot.Builder`; stub-first BFS with caps from `ExtractionLimits`).
 - `render` — pure layout (`HeapLayouter` + sticky `LayoutMemory`),
   theming (`ColorPalette`, `FontKit`), figures (`render.figures`), bezier
   connection routing/clipping, hover/reveal, `ExpansionMemory` (cap overrides).
@@ -107,15 +113,16 @@ Packages below sit under the root `com.github.ethangodden.debugmemoryview`.
   Every JDI wire call happens inside `SnapshotPipeline`'s Job on a worker
   thread (`SnapshotExtractor` does the walk) — never on the UI or debug event
   dispatch thread. Trigger methods capture debug-model references only.
-- **No SWT/Draw2d/JFace in `model` or `core.extract` models.** `model` (neutral records + builder)
-  and `HeapLayouter`/`LayoutMemory` stay JDK-only so those test suites need no runtime.
-- Diagrams and diffs are immutable; renderers must treat a `MemoryDiff` as
+- **No SWT/Draw2d/JFace in `model` or `core.extract` models.** `model` (the `MemorySnapshot`
+  records + `Builder`) and `HeapLayouter`/`LayoutMemory` stay JDK-only so those test suites need
+  no runtime.
+- Snapshots and diffs are immutable; renderers must treat a `MemoryDiff` as
   transient per render and never accumulate ghosts.
 - Consumers are called only on the SWT UI thread (`Display.asyncExec`), gated
-  by a sequence check so superseded diagrams are never displayed.
-- Reference values compare by **resolved target token** (`DiffEngine.valueEquals`):
+  by a sequence check so superseded snapshots are never displayed.
+- Reference values compare by **resolved target** (`DiffEngine.valueEquals`):
   retargeting an arrow is the change; a target's mutation shows on the target
-  box, not on every inbound arrow. Two dangling references are equal, and two unreadable values
+  struct, not on every inbound arrow. Two dangling references are equal, and two unreadable values
   (both mapped to `Primitive("?")`) are equal.
 
 ## Conventions
